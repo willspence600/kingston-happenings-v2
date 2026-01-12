@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("user") // user, organizer, admin
+  venueName String?
+  isTrusted Boolean  @default(false) // Trusted organizers can submit without approval
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  // Note: submittedEvents relation removed since we store Supabase UUIDs directly in submittedById
+  // Note: likes relation removed since we store Supabase UUIDs directly in Like.userId
+}
+
+model Venue {
+  id            String   @id @default(cuid())
+  name          String
+  address       String
+  neighborhood  String?
+  website       String?
+  imageUrl      String?
+  status        String   @default("approved") // pending, approved, rejected
+  promotionTier String   @default("standard") // standard, promoted, featured
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  events Event[]
+}
+
+model Event {
+  id          String  @id @default(cuid())
+  title       String
+  description String
+  date        String // YYYY-MM-DD format
+  startTime   String // HH:MM format
+  endTime     String?
+  price       String?
+  ticketUrl   String?
+  imageUrl    String?
+  featured    Boolean @default(false)
+  status      String  @default("pending") // pending, approved, rejected, cancelled
+  sortOrder   Int? // For admin-controlled sorting (especially for food & drink specials)
+
+  // Recurrence fields
+  isRecurring       Boolean @default(false)
+  recurrencePattern String? // weekly, biweekly, monthly
+  recurrenceDay     Int? // 0-6 for day of week (0=Sunday)
+  recurrenceEndDate String? // YYYY-MM-DD format
+  parentEventId     String? // Links recurring instances to parent
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  venue         Venue           @relation(fields: [venueId], references: [id])
+  venueId       String
+  // submittedById stores Supabase user ID (UUID), not Prisma User ID (CUID)
+  // We store it as a plain string without foreign key constraint since Supabase users
+  // don't exist in the Prisma User table
+  submittedById String?
+  categories    EventCategory[]
+  likes         Like[]
+}
+
+model EventCategory {
+  id      String @id @default(cuid())
+  name    String // concert, food-deal, trivia, etc.
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId String
+
+  @@unique([eventId, name])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // userId stores Supabase user ID (UUID), not Prisma User ID (CUID)
+  // We store it as a plain string without foreign key constraint since Supabase users
+  // don't exist in the Prisma User table
+  userId  String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId String
+
+  @@unique([userId, eventId])
+}
