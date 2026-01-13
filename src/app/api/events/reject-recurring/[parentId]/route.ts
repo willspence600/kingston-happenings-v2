@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { EventsService } from '@/services/database';
+import { handleApiError } from '@/lib/error-handler';
 
 export async function POST(
   request: NextRequest,
@@ -13,22 +14,10 @@ export async function POST(
     }
 
     const { parentId } = await params;
-
-    // Delete all events with this parentEventId OR this id
-    const result = await prisma.event.deleteMany({
-      where: {
-        OR: [
-          { id: parentId },
-          { parentEventId: parentId }
-        ],
-        status: 'pending'
-      },
-    });
-
-    return NextResponse.json({ success: true, count: result.count });
+    const result = await EventsService.rejectRecurring(parentId, user.id);
+    return NextResponse.json(result);
   } catch (error) {
-    console.error('Reject recurring events error:', error);
-    return NextResponse.json({ error: 'Failed to reject events' }, { status: 500 });
+    return handleApiError(error);
   }
 }
 

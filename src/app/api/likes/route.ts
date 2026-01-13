@@ -1,43 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { LikesService } from '@/services/database';
+import { handleApiError } from '@/lib/error-handler';
+import { validateBody } from '@/lib/validation/middleware';
+import { z } from 'zod';
+
+const ToggleLikeSchema = z.object({
+  eventId: z.string().min(1, 'Event ID is required'),
+});
 
 // GET /api/likes - Get current user's liked event IDs and like counts for all events
 export async function GET() {
   try {
     const user = await getCurrentUser();
     
-    // Get like counts for all events (visible to everyone)
-    const likeCounts = await prisma.like.groupBy({
-      by: ['eventId'],
-      _count: { eventId: true },
-    });
-
-    const likeCountMap: Record<string, number> = {};
-    likeCounts.forEach((lc) => {
-      likeCountMap[lc.eventId] = lc._count.eventId;
-    });
-
-    // Only get user's liked event IDs if they're logged in
-    if (!user) {
-      return NextResponse.json({ likes: [], likeCounts: likeCountMap });
-    }
-
-    const likes = await prisma.like.findMany({
-      where: { userId: user.id },
-      select: { eventId: true },
-    });
+    const likeCounts = await LikesService.getLikeCounts();
+    const likes = user ? await LikesService.getUserLikes(user.id) : [];
 
     return NextResponse.json({
-      likes: likes.map((l) => l.eventId),
-      likeCounts: likeCountMap,
+      likes,
+      likeCounts,
     });
   } catch (error) {
-    console.error('Get likes error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch likes' },
-      { status: 500 }
-    );
+    return handleApiError(error);
   }
 }
 
@@ -52,57 +37,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { eventId } = body;
-
-    if (!eventId) {
-      return NextResponse.json(
-        { error: 'Event ID is required' },
-        { status: 400 }
-      );
-    }
-
-    // Check if like exists
-    const existingLike = await prisma.like.findUnique({
-      where: {
-        userId_eventId: {
-          userId: user.id,
-          eventId,
-        },
-      },
-    });
-
-    if (existingLike) {
-      // Unlike
-      await prisma.like.delete({
-        where: { id: existingLike.id },
-      });
-      
-      const newCount = await prisma.like.count({
-        where: { eventId },
-      });
-
-      return NextResponse.json({ liked: false, likeCount: newCount });
-    } else {
-      // Like
-      await prisma.like.create({
-        data: {
-          userId: user.id,
-          eventId,
-        },
-      });
-
-      const newCount = await prisma.like.count({
-        where: { eventId },
-      });
-
-      return NextResponse.json({ liked: true, likeCount: newCount });
-    }
+    const { eventId } = await validateBody(request, ToggleLikeSchema);
+    const result = await LikesService.toggle(eventId, user.id);
+    return NextResponse.json(result);
   } catch (error) {
-    console.error('Toggle like error:', error);
-    return NextResponse.json(
-      { error: 'Failed to toggle like' },
-      { status: 500 }
-    );
+    return handleApiError(error);
   }
 }

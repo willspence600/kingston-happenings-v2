@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { EventsService } from '@/services/database';
+import { handleApiError } from '@/lib/error-handler';
 
 // POST /api/events/[id]/reject - Reject a pending event
 export async function POST(
@@ -14,18 +15,10 @@ export async function POST(
     }
 
     const { id } = await params;
-
-    await prisma.event.delete({
-      where: { id },
-    });
-
-    return NextResponse.json({ success: true });
+    const event = await EventsService.reject(id, user.id);
+    return NextResponse.json({ event });
   } catch (error) {
-    console.error('Reject event error:', error);
-    return NextResponse.json(
-      { error: 'Failed to reject event' },
-      { status: 500 }
-    );
+    return handleApiError(error);
   }
 }
 
