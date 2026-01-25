@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { EventsService } from '@/services/database';
-import { handleApiError } from '@/lib/error-handler';
 
 export async function POST(
   request: NextRequest,
@@ -14,10 +13,23 @@ export async function POST(
     }
 
     const { parentId } = await params;
-    const result = await EventsService.approveRecurring(parentId, user.id);
-    return NextResponse.json(result);
+
+    // Update all events with this parentEventId OR this id
+    const result = await prisma.event.updateMany({
+      where: {
+        OR: [
+          { id: parentId },
+          { parentEventId: parentId }
+        ],
+        status: 'pending'
+      },
+      data: { status: 'approved' },
+    });
+
+    return NextResponse.json({ success: true, count: result.count });
   } catch (error) {
-    return handleApiError(error);
+    console.error('Approve recurring events error:', error);
+    return NextResponse.json({ error: 'Failed to approve events' }, { status: 500 });
   }
 }
 

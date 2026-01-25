@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { VenuesService } from '@/services/database';
-import { handleApiError } from '@/lib/error-handler';
 
 // POST /api/venues/[id]/reject - Reject a venue
 export async function POST(
@@ -15,10 +14,19 @@ export async function POST(
     }
 
     const { id } = await params;
-    const venue = await VenuesService.reject(id, user.id);
-    return NextResponse.json({ venue });
+
+    // Delete the venue (and cascade to events if any)
+    await prisma.venue.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ success: true });
   } catch (error) {
-    return handleApiError(error);
+    console.error('Reject venue error:', error);
+    return NextResponse.json(
+      { error: 'Failed to reject venue' },
+      { status: 500 }
+    );
   }
 }
 

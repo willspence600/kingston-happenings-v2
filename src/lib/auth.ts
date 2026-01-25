@@ -64,11 +64,3 @@ export async function requireAdmin(): Promise<AuthUser> {
   }
   return user;
 }
-
-export async function requireOrganizer(): Promise<AuthUser> {
-  const user = await getCurrentUser();
-  if (!user || (user.role !== 'organizer' && user.role !== 'admin')) {
-    throw new Error('Forbidden');
-  }
-  return user;
-}

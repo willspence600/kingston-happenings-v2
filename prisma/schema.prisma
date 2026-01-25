@@ -6,59 +6,44 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
-enum EventStatus {
-  pending
-  approved
-  rejected
-  cancelled
-}
-
-enum VenueStatus {
-  pending
-  approved
-  rejected
-}
-
-enum PromotionTier {
-  standard
-  promoted
-  featured
-}
+// NOTE: User authentication is handled by Supabase Auth + profiles table
+// The profiles table is created via supabase-setup.sql, not Prisma
+// User IDs in this schema reference Supabase Auth UUIDs stored as strings
 
 model Venue {
-  id            String        @id @default(cuid())
+  id            String   @id @default(cuid())
   name          String
   address       String
   neighborhood  String?
   website       String?
   imageUrl      String?
-  status        VenueStatus   @default(approved)
-  promotionTier PromotionTier @default(standard)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  status        String   @default("approved") // pending, approved, rejected
+  promotionTier String   @default("standard") // standard, promoted, featured
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Relations
   events Event[]
 }
 
 model Event {
-  id          String      @id @default(cuid())
+  id          String  @id @default(cuid())
   title       String
   description String
-  date        String      // YYYY-MM-DD format
-  startTime   String      // HH:MM format
+  date        String // YYYY-MM-DD format
+  startTime   String // HH:MM format
   endTime     String?
   price       String?
   ticketUrl   String?
   imageUrl    String?
-  featured    Boolean     @default(false)
-  status      EventStatus @default(pending)
-  sortOrder   Int?        // For admin-controlled sorting (especially for food & drink specials)
+  featured    Boolean @default(false)
+  status      String  @default("pending") // pending, approved, rejected, cancelled
+  sortOrder   Int? // For admin-controlled sorting (especially for food & drink specials)
 
   // Recurrence fields
   isRecurring       Boolean @default(false)

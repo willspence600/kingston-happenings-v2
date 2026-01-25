@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { VenuesService } from '@/services/database';
-import { handleApiError } from '@/lib/error-handler';
 
 // POST /api/venues/[id]/approve - Approve a venue
 export async function POST(
@@ -15,10 +14,19 @@ export async function POST(
     }
 
     const { id } = await params;
-    const venue = await VenuesService.approve(id, user.id);
+
+    const venue = await prisma.venue.update({
+      where: { id },
+      data: { status: 'approved' },
+    });
+
     return NextResponse.json({ venue });
   } catch (error) {
-    return handleApiError(error);
+    console.error('Approve venue error:', error);
+    return NextResponse.json(
+      { error: 'Failed to approve venue' },
+      { status: 500 }
+    );
   }
 }
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { EventsService } from '@/services/database';
-import { handleApiError } from '@/lib/error-handler';
 
 // POST /api/events/[id]/approve - Approve a pending event
 export async function POST(
@@ -15,10 +14,28 @@ export async function POST(
     }
 
     const { id } = await params;
-    const event = await EventsService.approve(id, user.id);
-    return NextResponse.json({ event });
+
+    const event = await prisma.event.update({
+      where: { id },
+      data: { status: 'approved' },
+      include: {
+        venue: true,
+        categories: true,
+      },
+    });
+
+    return NextResponse.json({
+      event: {
+        ...event,
+        categories: event.categories.map((c) => c.name),
+      },
+    });
   } catch (error) {
-    return handleApiError(error);
+    console.error('Approve event error:', error);
+    return NextResponse.json(
+      { error: 'Failed to approve event' },
+      { status: 500 }
+    );
   }
 }
 

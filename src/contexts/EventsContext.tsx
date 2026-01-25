@@ -60,6 +60,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const [userLikes, setUserLikes] = useState<string[]>([]);
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const pollIntervalMs = 30000;
 
   const refreshEvents = useCallback(async () => {
     try {
@@ -154,6 +155,31 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       refreshPendingEvents();
     }
   }, [authLoading, isAdmin, refreshPendingEvents]);
+
+  // Periodically refresh data so UI reflects new DB changes without manual refresh
+  useEffect(() => {
+    if (authLoading) return;
+
+    let isActive = true;
+    const refreshAll = async () => {
+      if (!isActive) return;
+      await Promise.all([
+        refreshEvents(),
+        refreshVenues(),
+        refreshLikes(),
+        isAdmin ? refreshPendingEvents() : Promise.resolve(),
+      ]);
+    };
+
+    const intervalId = setInterval(() => {
+      void refreshAll();
+    }, pollIntervalMs);
+
+    return () => {
+      isActive = false;
+      clearInterval(intervalId);
+    };
+  }, [authLoading, isAdmin, refreshEvents, refreshVenues, refreshLikes, refreshPendingEvents, pollIntervalMs]);
 
   const toggleLike = async (eventId: string) => {
     try {
