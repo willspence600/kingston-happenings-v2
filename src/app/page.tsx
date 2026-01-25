@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, Calendar, Sparkles, Clock, MapPin, Utensils, Music, PartyPopper, Ticket, Sun, Trophy } from 'lucide-react';
+import { ArrowRight, Calendar, Sparkles, Clock, MapPin, Utensils, Music, PartyPopper, Ticket, Sun, Trophy, Loader2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,7 +18,7 @@ const filterButtons: { id: EventCategory; label: string; icon: typeof Music }[] 
 ];
 
 export default function HomePage() {
-  const { getTodaysEvents, getFeaturedEvents, events } = useEvents();
+  const { getTodaysEvents, getFeaturedEvents, events, isLoading } = useEvents();
   const { user } = useAuth();
   const [activeFilter, setActiveFilter] = useState<EventCategory | null>(null);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
@@ -82,6 +82,14 @@ export default function HomePage() {
 
   // Note: Height matching removed to allow event cards to maintain their natural size
   // Event cards now use aspect-square to maintain consistent sizing
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center py-24">
+        <Loader2 size={32} className="animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">

@@ -1,39 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import jwt from 'jsonwebtoken';
+import prisma from '@/lib/prisma';
+import { getCurrentUser } from '@/lib/auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-
+// POST /api/events/[id]/cancel - Cancel an event (admin only)
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: eventId } = await params;
-    
-    // Verify admin
-    const token = request.cookies.get('token')?.value;
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-
+    const user = await getCurrentUser();
     if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Update event status to cancelled
-    await prisma.event.update({
-      where: { id: eventId },
+    const { id } = await params;
+
+    const event = await prisma.event.update({
+      where: { id },
       data: { status: 'cancelled' },
+      include: {
+        venue: true,
+        categories: true,
+      },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      event: {
+        ...event,
+        categories: event.categories.map((c) => c.name),
+      },
+    });
   } catch (error) {
     console.error('Cancel event error:', error);
-    return NextResponse.json({ error: 'Failed to cancel event' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to cancel event' },
+      { status: 500 }
+    );
   }
 }
-

@@ -21,7 +21,6 @@ Vercel is made by the creators of Next.js and offers the best experience with:
    git init
    git add .
    git commit -m "Initial commit"
-   
    # Create a repository on GitHub, then:
    git remote add origin https://github.com/yourusername/kingston-happenings.git
    git push -u origin main

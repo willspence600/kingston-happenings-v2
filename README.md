@@ -61,15 +61,22 @@ This creates:
 
 ### 5. Configure Environment Variables
 
-Create a `.env.local` file in the `webapp/` directory:
+Create a `.env.local` file in the project root (this repo) for Next.js.
+Also create a `.env` file for Prisma CLI (Prisma loads `.env` by default, not `.env.local`).
+
+Tip: you can keep a single source of truth by copying the same values into both files.
 
 ```env
 # Supabase Configuration (Required)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_your_publishable_key_here
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_your_secret_key_here
 
 # Supabase Database Connection (for Prisma)
-DATABASE_URL="postgresql://postgres:YOUR-PASSWORD@db.your-project-ref.supabase.co:6543/postgres?pgbouncer=true"
+# Runtime (pooler / 6543)
+DATABASE_URL="postgres://postgres.your-project-ref:YOUR-PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?pgbouncer=true"
+# Migrations (direct or pooler session / 5432)
+DIRECT_URL="postgres://postgres.your-project-ref:YOUR-PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres"
 ```
 
 **See `SUPABASE_DATABASE_SETUP.md` for detailed setup instructions.**

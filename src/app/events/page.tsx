@@ -86,7 +86,7 @@ function EventsContent() {
   const tabParam = searchParams.get('tab');
   const initialTab: TabType = tabParam === 'deals' ? 'deals' : tabParam === 'all' ? 'all' : 'events';
 
-  const { events: allEventsFromContext, getUpcomingEvents, isLiked, toggleLike, getLikeCount } = useEvents();
+  const { events: allEventsFromContext, getUpcomingEvents, isLiked, toggleLike, getLikeCount, isLoading } = useEvents();
   const { user } = useAuth();
   
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
@@ -468,6 +468,10 @@ function EventsContent() {
     '3months': 'Past 3 Months',
     '6months': 'Past 6 Months',
   };
+
+  if (isLoading) {
+    return <EventsLoading />;
+  }
 
   return (
     <>
