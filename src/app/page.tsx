@@ -109,8 +109,7 @@ export default function HomePage() {
             <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl mb-4 animate-slide-up">
               {user && firstName ? (
                 <>
-                  Welcome back,{' '}
-                  <span className="italic text-accent">{firstName}.</span>
+                  test is successful
                 </>
               ) : (
                 <>
