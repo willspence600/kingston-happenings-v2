@@ -4,21 +4,18 @@
 -- ============================================================
 
 -- 0) DROP EVERYTHING FIRST (Clean slate)
--- Drop triggers first (they depend on tables/functions)
+-- Drop the auth trigger first (lives on auth.users, not on profiles)
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-DROP TRIGGER IF EXISTS on_profiles_updated ON public.profiles;
 
--- Drop functions
+-- Drop the table with CASCADE — this automatically removes any
+-- policies, triggers, and indexes that depend on it, so we don't
+-- need to drop them individually (which would fail on a fresh DB
+-- where the table doesn't exist yet).
+DROP TABLE IF EXISTS public.profiles CASCADE;
+
+-- Drop functions (safe even if they don't exist)
 DROP FUNCTION IF EXISTS public.handle_new_user();
 DROP FUNCTION IF EXISTS public.handle_updated_at();
-
--- Drop policies (must drop before table)
-DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
-DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
-DROP POLICY IF EXISTS "Users can update own profile except role" ON public.profiles;
-
--- Drop table
-DROP TABLE IF EXISTS public.profiles CASCADE;
 
 -- ============================================================
 -- NOW CREATE EVERYTHING FRESH
