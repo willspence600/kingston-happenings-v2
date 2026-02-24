@@ -6,7 +6,7 @@ import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 
 // Filter button config
 const filterButtons: { id: EventCategory; label: string; icon: typeof Music }[] = [
@@ -36,19 +36,6 @@ export default function HomePage() {
     : allTodayEvents;
   // Keep the sorted order from getTodaysEvents (already sorted by promotion tier)
   const todayEvents = filteredTodayEvents.slice(0, 9);
-  
-  // Debug: Log events for troubleshooting
-  useEffect(() => {
-    console.log('Homepage Events Debug:', {
-      totalEvents: events.length,
-      todaysEventsCount: todaysEvents.length,
-      allTodayEventsCount: allTodayEvents.length,
-      filteredTodayEventsCount: filteredTodayEvents.length,
-      todayEventsCount: todayEvents.length,
-      activeFilter,
-      todayDate: format(today, 'yyyy-MM-dd'),
-    });
-  }, [events.length, todaysEvents.length, allTodayEvents.length, filteredTodayEvents.length, todayEvents.length, activeFilter, today]);
   
   // Filter food & drink specials and limit featured/promoted venues to 1 special each
   // getTodaysEvents() already sorts by promotion tier, so we maintain that order

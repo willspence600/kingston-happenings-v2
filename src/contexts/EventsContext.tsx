@@ -60,7 +60,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const [userLikes, setUserLikes] = useState<string[]>([]);
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
-  const pollIntervalMs = 30000;
 
   const refreshEvents = useCallback(async () => {
     try {
@@ -156,30 +155,25 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     }
   }, [authLoading, isAdmin, refreshPendingEvents]);
 
-  // Periodically refresh data so UI reflects new DB changes without manual refresh
+  // Refresh data when the browser tab regains focus (replaces 30s polling to
+  // avoid burning through Vercel's origin-transfer bandwidth while idle).
   useEffect(() => {
     if (authLoading) return;
 
-    let isActive = true;
-    const refreshAll = async () => {
-      if (!isActive) return;
-      await Promise.all([
-        refreshEvents(),
-        refreshVenues(),
-        refreshLikes(),
-        isAdmin ? refreshPendingEvents() : Promise.resolve(),
-      ]);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void Promise.all([
+          refreshEvents(),
+          refreshVenues(),
+          refreshLikes(),
+          isAdmin ? refreshPendingEvents() : Promise.resolve(),
+        ]);
+      }
     };
 
-    const intervalId = setInterval(() => {
-      void refreshAll();
-    }, pollIntervalMs);
-
-    return () => {
-      isActive = false;
-      clearInterval(intervalId);
-    };
-  }, [authLoading, isAdmin, refreshEvents, refreshVenues, refreshLikes, refreshPendingEvents, pollIntervalMs]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [authLoading, isAdmin, refreshEvents, refreshVenues, refreshLikes, refreshPendingEvents]);
 
   const toggleLike = async (eventId: string) => {
     try {
