@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       orderBy: { name: 'asc' },
     });
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       venues: venues.map((v) => ({
         id: v.id,
         name: v.name,
@@ -41,6 +41,10 @@ export async function GET(request: NextRequest) {
         eventCount: v._count.events,
       })),
     });
+    if (status !== 'pending') {
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    }
+    return res;
   } catch (error) {
     console.error('Get venues error:', error);
     return NextResponse.json(

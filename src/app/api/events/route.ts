@@ -127,7 +127,11 @@ export async function GET(request: NextRequest) {
       return baseEvent;
     });
 
-    return NextResponse.json({ events: transformedEvents });
+    const res = NextResponse.json({ events: transformedEvents });
+    if (status !== 'pending') {
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    }
+    return res;
   } catch (error) {
     console.error('Get events error:', error);
     return NextResponse.json(

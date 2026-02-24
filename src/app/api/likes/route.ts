@@ -18,9 +18,10 @@ export async function GET() {
       likeCountMap[lc.eventId] = lc._count.eventId;
     });
 
-    // Only get user's liked event IDs if they're logged in
     if (!user) {
-      return NextResponse.json({ likes: [], likeCounts: likeCountMap });
+      const res = NextResponse.json({ likes: [], likeCounts: likeCountMap });
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+      return res;
     }
 
     const likes = await prisma.like.findMany({
@@ -28,10 +29,12 @@ export async function GET() {
       select: { eventId: true },
     });
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       likes: likes.map((l) => l.eventId),
       likeCounts: likeCountMap,
     });
+    res.headers.set('Cache-Control', 'private, max-age=30');
+    return res;
   } catch (error) {
     console.error('Get likes error:', error);
     return NextResponse.json(
