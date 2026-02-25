@@ -52,6 +52,19 @@ interface EventSubmission {
 
 const EventsContext = createContext<EventsContextType | undefined>(undefined);
 
+async function safeJson(res: Response) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      res.ok
+        ? 'Server returned an invalid response. Please try again.'
+        : `Request failed (${res.status}). The server may be temporarily overloaded.`
+    );
+  }
+}
+
 export function EventsProvider({ children }: { children: ReactNode }) {
   const { user, isAdmin, isLoading: authLoading } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
@@ -64,7 +77,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const refreshEvents = useCallback(async () => {
     try {
       const res = await fetch('/api/events');
-      const data = await res.json();
+      const data = await safeJson(res);
       if (data.events) {
         // Transform API response to match Event type
         const transformedEvents = data.events.map((e: Record<string, unknown>) => ({
@@ -90,7 +103,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch('/api/events?status=pending');
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJson(res);
         if (data.events) {
           const transformedEvents = data.events.map((e: Record<string, unknown>) => ({
             ...e,
@@ -108,7 +121,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const refreshVenues = useCallback(async () => {
     try {
       const res = await fetch('/api/venues');
-      const data = await res.json();
+      const data = await safeJson(res);
       if (data.venues) {
         setVenues(data.venues);
       }
@@ -120,7 +133,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const refreshLikes = useCallback(async () => {
     try {
       const res = await fetch('/api/likes');
-      const data = await res.json();
+      const data = await safeJson(res);
       if (data.likes) {
         setUserLikes(data.likes);
       }
@@ -184,7 +197,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       });
 
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJson(res);
         // Update state immediately for responsive UI
         if (data.liked) {
           setUserLikes(prev => {
@@ -218,8 +231,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(eventData),
       });
 
-      const data = await res.json();
-      
+      const data = await safeJson(res);
+
       if (res.ok) {
         console.log('[EventsContext] Event submitted successfully:', data.event?.id, 'submittedById:', data.event?.submittedById, 'status:', data.event?.status);
         // Refresh events lists
