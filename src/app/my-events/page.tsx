@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { Heart, Calendar, ArrowRight, FileText, Clock, CheckCircle, AlertTriangle, XCircle, Loader2, Utensils } from 'lucide-react';
+import { Heart, Calendar, ArrowRight, FileText, Clock, CheckCircle, AlertTriangle, XCircle, Loader2, Utensils, Trash2, Ban, ChevronDown, ChevronUp, Edit } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { EventCard, DatePicker } from '@/components';
@@ -20,10 +20,20 @@ interface SubmittedEvent {
   price?: string;
   imageUrl?: string;
   status: string;
+  submittedById?: string;
   createdAt: string;
   venue: { id: string; name: string; address: string };
   categories: string[];
   likeCount: number;
+  isRecurring?: boolean;
+  recurrencePattern?: string;
+  recurrenceEndDate?: string;
+  parentEventId?: string;
+}
+
+interface EventGroup {
+  parentEvent: SubmittedEvent;
+  instances: SubmittedEvent[];
 }
 
 export default function MyEventsPage() {
@@ -40,6 +50,8 @@ export default function MyEventsPage() {
   const [dateRangeEnd, setDateRangeEnd] = useState<string>('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [tempDateMode, setTempDateMode] = useState<'single' | 'range'>('single');
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const datePickerRef = useRef<HTMLDivElement>(null);
 
   const allLikedEvents = useMemo(() => {
@@ -226,6 +238,89 @@ export default function MyEventsPage() {
       fetchSubmissions();
     }
   }, [user, activeTab, fetchSubmissions]);
+
+  const groupedSubmissions = useMemo((): (SubmittedEvent | EventGroup)[] => {
+    if (submittedEvents.length === 0) return [];
+    const parentMap = new Map<string, SubmittedEvent>();
+    const childMap = new Map<string, SubmittedEvent[]>();
+    const standalone: SubmittedEvent[] = [];
+
+    for (const ev of submittedEvents) {
+      if (ev.parentEventId) {
+        const list = childMap.get(ev.parentEventId) || [];
+        list.push(ev);
+        childMap.set(ev.parentEventId, list);
+      } else if (ev.isRecurring) {
+        parentMap.set(ev.id, ev);
+      } else {
+        standalone.push(ev);
+      }
+    }
+
+    const groups: (SubmittedEvent | EventGroup)[] = [];
+    for (const [parentId, parent] of parentMap) {
+      const instances = childMap.get(parentId) || [];
+      instances.sort((a, b) => a.date.localeCompare(b.date));
+      if (instances.length > 0) {
+        groups.push({ parentEvent: parent, instances });
+      } else {
+        groups.push(parent);
+      }
+      childMap.delete(parentId);
+    }
+
+    // Orphan children whose parent wasn't in the current list
+    for (const [, children] of childMap) {
+      standalone.push(...children);
+    }
+
+    return [...groups, ...standalone];
+  }, [submittedEvents]);
+
+  const toggleGroup = (parentId: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(parentId)) next.delete(parentId);
+      else next.add(parentId);
+      return next;
+    });
+  };
+
+  const handleCancelEvent = async (eventId: string) => {
+    if (!confirm('Are you sure you want to cancel this event?')) return;
+    setActionLoading(eventId);
+    try {
+      const res = await fetch(`/api/events/${eventId}/cancel`, { method: 'POST' });
+      if (res.ok) {
+        await fetchSubmissions();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to cancel event');
+      }
+    } catch {
+      alert('Network error. Please try again.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!confirm('Are you sure you want to permanently delete this event? This cannot be undone.')) return;
+    setActionLoading(eventId);
+    try {
+      const res = await fetch(`/api/events/${eventId}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchSubmissions();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to delete event');
+      }
+    } catch {
+      alert('Network error. Please try again.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   if (authLoading) {
     return (
@@ -862,78 +957,67 @@ export default function MyEventsPage() {
                   </div>
                 </div>
                 <div className="space-y-4">
-                  {submittedEvents.map((event) => (
-                    <div
-                      key={event.id}
-                      className="bg-card border border-border rounded-xl overflow-hidden"
-                    >
-                      <div className="p-6">
-                        <div className="flex flex-col lg:flex-row lg:items-start gap-6">
-                          {/* Event Image */}
-                          <div className="w-full lg:w-40 h-28 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                            {event.imageUrl ? (
-                              <img
-                                src={event.imageUrl}
-                                alt={event.title}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
-                                <Calendar size={28} className="text-muted-foreground" />
+                  {groupedSubmissions.map((item) => {
+                    const isGroup = 'instances' in item;
+                    if (isGroup) {
+                      const group = item as EventGroup;
+                      const expanded = expandedGroups.has(group.parentEvent.id);
+                      const upcoming = group.instances.filter(i => i.date >= format(new Date(), 'yyyy-MM-dd'));
+                      return (
+                        <div key={group.parentEvent.id} className="bg-card border border-border rounded-xl overflow-hidden">
+                          <button
+                            onClick={() => toggleGroup(group.parentEvent.id)}
+                            className="w-full p-6 text-left hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 mb-1">
+                                  {getStatusBadge(group.parentEvent.status)}
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                                    Recurring &middot; {group.parentEvent.recurrencePattern}
+                                  </span>
+                                </div>
+                                <h3 className="font-display text-lg text-foreground">
+                                  {group.parentEvent.title}
+                                </h3>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  {group.instances.length} occurrences &middot; {upcoming.length} upcoming
+                                </p>
                               </div>
-                            )}
-                          </div>
-
-                          {/* Event Details */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 mb-2">
-                              {getStatusBadge(event.status)}
-                              {event.categories.slice(0, 2).map((cat) => (
-                                <span
-                                  key={cat}
-                                  className={`px-2 py-0.5 rounded-full text-xs font-medium text-white ${categoryColors[cat as EventCategory]}`}
-                                >
-                                  {categoryLabels[cat as EventCategory]}
-                                </span>
+                              {expanded ? <ChevronUp size={20} className="text-muted-foreground" /> : <ChevronDown size={20} className="text-muted-foreground" />}
+                            </div>
+                          </button>
+                          {expanded && (
+                            <div className="border-t border-border divide-y divide-border">
+                              {group.instances.map((inst) => (
+                                <SubmissionRow
+                                  key={inst.id}
+                                  event={inst}
+                                  isChild
+                                  getStatusBadge={getStatusBadge}
+                                  actionLoading={actionLoading}
+                                  onCancel={handleCancelEvent}
+                                  onDelete={handleDeleteEvent}
+                                />
                               ))}
-                            </div>
-                            
-                            <h3 className="font-display text-lg text-foreground mb-1">
-                              {event.title}
-                            </h3>
-                            
-                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-2">
-                              <span className="flex items-center gap-1">
-                                <Calendar size={14} />
-                                {format(parseISO(event.date), 'EEE, MMM d, yyyy')}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Clock size={14} />
-                                {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
-                              </span>
-                            </div>
-                            
-                            <p className="text-sm text-muted-foreground">
-                              Submitted {format(parseISO(event.createdAt), 'MMM d, yyyy \'at\' h:mm a')}
-                            </p>
-                          </div>
-
-                          {/* Actions */}
-                          {event.status === 'approved' && (
-                            <div className="flex-shrink-0">
-                              <Link
-                                href={`/events/${event.id}`}
-                                className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors"
-                              >
-                                View Event
-                                <ArrowRight size={16} />
-                              </Link>
                             </div>
                           )}
                         </div>
-                      </div>
-                    </div>
-                  ))}
+                      );
+                    }
+                    const event = item as SubmittedEvent;
+                    return (
+                      <SubmissionRow
+                        key={event.id}
+                        event={event}
+                        isChild={false}
+                        getStatusBadge={getStatusBadge}
+                        actionLoading={actionLoading}
+                        onCancel={handleCancelEvent}
+                        onDelete={handleDeleteEvent}
+                      />
+                    );
+                  })}
                 </div>
               </>
             ) : (
@@ -954,6 +1038,106 @@ export default function MyEventsPage() {
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function SubmissionRow({
+  event,
+  isChild,
+  getStatusBadge,
+  actionLoading,
+  onCancel,
+  onDelete,
+}: {
+  event: SubmittedEvent;
+  isChild: boolean;
+  getStatusBadge: (status: string) => React.ReactNode;
+  actionLoading: string | null;
+  onCancel: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const loading = actionLoading === event.id;
+  const isCancelled = event.status === 'cancelled';
+
+  return (
+    <div className={`bg-card ${isChild ? '' : 'border border-border rounded-xl'} overflow-hidden`}>
+      <div className={`p-6 ${isChild ? 'pl-10' : ''}`}>
+        <div className="flex flex-col lg:flex-row lg:items-start gap-6">
+          <div className="w-full lg:w-40 h-28 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+            {event.imageUrl ? (
+              <img src={event.imageUrl} alt={event.title} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
+                <Calendar size={28} className="text-muted-foreground" />
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              {getStatusBadge(event.status)}
+              {event.categories.slice(0, 2).map((cat) => (
+                <span
+                  key={cat}
+                  className={`px-2 py-0.5 rounded-full text-xs font-medium text-white ${categoryColors[cat as EventCategory]}`}
+                >
+                  {categoryLabels[cat as EventCategory]}
+                </span>
+              ))}
+            </div>
+            <h3 className="font-display text-lg text-foreground mb-1">{event.title}</h3>
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-2">
+              <span className="flex items-center gap-1">
+                <Calendar size={14} />
+                {format(parseISO(event.date), 'EEE, MMM d, yyyy')}
+              </span>
+              <span className="flex items-center gap-1">
+                <Clock size={14} />
+                {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Submitted {format(parseISO(event.createdAt), 'MMM d, yyyy \'at\' h:mm a')}
+            </p>
+          </div>
+
+          <div className="flex flex-shrink-0 items-center gap-2 flex-wrap">
+            {event.status === 'approved' && (
+              <Link
+                href={`/events/${event.id}`}
+                className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors text-sm"
+              >
+                View <ArrowRight size={14} />
+              </Link>
+            )}
+            {!isCancelled && event.status !== 'rejected' && (
+              <Link
+                href={`/events/${event.id}/edit`}
+                className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg hover:bg-muted transition-colors text-sm text-muted-foreground"
+              >
+                <Edit size={14} /> Edit
+              </Link>
+            )}
+            {!isCancelled && event.status !== 'rejected' && (
+              <button
+                onClick={() => onCancel(event.id)}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-2 border border-amber-200 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors text-sm disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />} Cancel
+              </button>
+            )}
+            <button
+              onClick={() => onDelete(event.id)}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Delete
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

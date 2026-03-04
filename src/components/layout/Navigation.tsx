@@ -20,7 +20,7 @@ const navLinks = [
 export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isLoading: authLoading } = useAuth();
   const { pendingEvents } = useEvents();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -113,7 +113,9 @@ export default function Navigation() {
               Submit Event
             </Link>
             
-            {user ? (
+            {authLoading ? (
+              <div className="w-24 h-9 rounded-lg bg-muted animate-pulse" />
+            ) : user ? (
               <div className="relative">
                 <button
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
@@ -294,7 +296,9 @@ export default function Navigation() {
                 Submit Event
               </Link>
               
-              {user ? (
+              {authLoading ? (
+                <div className="h-12 rounded-lg bg-muted animate-pulse" />
+              ) : user ? (
                 <>
                   <Link
                     href="/account"
