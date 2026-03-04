@@ -15,7 +15,11 @@ import {
   Navigation,
   Copy,
   Check,
-  Repeat
+  Repeat,
+  Edit,
+  Ban,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
@@ -27,10 +31,11 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const router = useRouter();
   const { getEventById, getEventsByVenue, isLiked, toggleLike, getLikeCount } = useEvents();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [copied, setCopied] = useState(false);
+  const [eventActionLoading, setEventActionLoading] = useState(false);
   
   const event = getEventById(id);
 
@@ -114,6 +119,51 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       return;
     }
     toggleLike(event.id);
+  };
+
+  const canManageEvent = user && (isAdmin || event.submittedById === user.id);
+  const isCancelled = event.status === 'cancelled';
+
+  const handleCancelEvent = async () => {
+    if (!confirm('Are you sure you want to cancel this event?')) return;
+    setEventActionLoading(true);
+    try {
+      const res = await fetch(`/api/events/${event.id}/cancel`, { method: 'POST' });
+      if (res.ok) {
+        setToastMessage('Event cancelled');
+        setShowToast(true);
+        window.location.reload();
+      } else {
+        const data = await res.json();
+        setToastMessage(data.error || 'Failed to cancel event');
+        setShowToast(true);
+      }
+    } catch {
+      setToastMessage('Network error');
+      setShowToast(true);
+    } finally {
+      setEventActionLoading(false);
+    }
+  };
+
+  const handleDeleteEvent = async () => {
+    if (!confirm('Are you sure you want to permanently delete this event? This cannot be undone.')) return;
+    setEventActionLoading(true);
+    try {
+      const res = await fetch(`/api/events/${event.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        router.push('/my-events');
+      } else {
+        const data = await res.json();
+        setToastMessage(data.error || 'Failed to delete event');
+        setShowToast(true);
+      }
+    } catch {
+      setToastMessage('Network error');
+      setShowToast(true);
+    } finally {
+      setEventActionLoading(false);
+    }
   };
 
   return (
@@ -275,6 +325,39 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           {/* Sidebar */}
           <div className="lg:col-span-1">
             <div className="sticky top-24 space-y-6">
+              {/* Event Management Card (for submitter / admin) */}
+              {canManageEvent && (
+                <div className="bg-card border border-border rounded-xl p-6">
+                  <h3 className="font-medium text-foreground mb-3">Manage Event</h3>
+                  <div className="space-y-2">
+                    {!isCancelled && event.status !== 'rejected' && (
+                      <Link
+                        href={`/events/${event.id}/edit`}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
+                      >
+                        <Edit size={16} /> Edit Event
+                      </Link>
+                    )}
+                    {!isCancelled && event.status !== 'rejected' && (
+                      <button
+                        onClick={handleCancelEvent}
+                        disabled={eventActionLoading}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-50 transition-colors disabled:opacity-50"
+                      >
+                        {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />} Cancel Event
+                      </button>
+                    )}
+                    <button
+                      onClick={handleDeleteEvent}
+                      disabled={eventActionLoading}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                      {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Delete Event
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Ticket/Price Card */}
               <div className="bg-card border border-border rounded-xl p-6">
                 {event.price && (

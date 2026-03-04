@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { User as SupabaseUser, AuthError, AuthChangeEvent, Session } from '@supabase/supabase-js';
 
@@ -154,13 +154,15 @@ function formatAuthError(error: AuthError): string {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const userRef = useRef<User | null>(null);
 
-  // Load user with profile from profiles table
+  // Keep ref in sync so callbacks always see the latest user
+  useEffect(() => { userRef.current = user; }, [user]);
+
   const loadUserWithProfile = useCallback(async (supabaseUser: SupabaseUser) => {
     console.log('[Auth] Loading user with profile:', supabaseUser.id);
-    
+
     try {
-      // Check if email is verified - if not, don't load user
       const emailVerified = !!supabaseUser.email_confirmed_at || !!supabaseUser.confirmed_at;
       if (!emailVerified) {
         console.log('[Auth] Email not verified, not loading user');
@@ -168,19 +170,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
         return;
       }
-      
-      // Add timeout to profile operations (5 seconds max)
+
       let profile: Profile | null = null;
+      let profileTimedOut = false;
       try {
         const profilePromise = (async () => {
           let p = await fetchProfile(supabaseUser.id);
-          
-          // If no profile exists, create one with default role from metadata
           if (!p) {
             const metadata = supabaseUser.user_metadata || {};
             const defaultRole = (metadata.role as UserRole) || 'user';
-            console.log('[Auth] Creating missing profile with role:', defaultRole);
-            
             p = await createProfile(
               supabaseUser.id,
               defaultRole,
@@ -188,32 +186,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               metadata.venueName
             );
           }
-          
           return p;
         })();
-        
-        // Add timeout wrapper (reduced to 2 seconds for faster login)
+
         profile = await Promise.race([
           profilePromise,
           new Promise<Profile | null>((resolve) => {
             setTimeout(() => {
-              console.warn('[Auth] Profile loading timeout after 2s, using metadata');
+              console.warn('[Auth] Profile loading timeout after 5s');
+              profileTimedOut = true;
               resolve(null);
-            }, 2000);
+            }, 5000);
           })
         ]);
       } catch (profileError) {
-        console.warn('[Auth] Profile loading failed, using user metadata only:', profileError);
+        console.warn('[Auth] Profile loading failed:', profileError);
         profile = null;
       }
-      
+
+      // If profile failed/timed out and we already have this user with a
+      // known role, keep the existing state instead of downgrading.
+      const existing = userRef.current;
+      if (!profile && existing && existing.id === supabaseUser.id) {
+        console.log('[Auth] Profile unavailable, keeping existing user state');
+        setIsLoading(false);
+        return;
+      }
+
       const builtUser = buildUser(supabaseUser, profile);
-      console.log('[Auth] Final user state:', builtUser);
       setUser(builtUser);
       setIsLoading(false);
     } catch (error) {
       console.error('[Auth] Error loading user with profile:', error);
-      // Even if profile loading fails, create a basic user from metadata
+      // If we already have this user loaded, keep them rather than downgrading
+      const existing = userRef.current;
+      if (existing && existing.id === supabaseUser.id) {
+        console.log('[Auth] Outer error but keeping existing user state');
+        setIsLoading(false);
+        return;
+      }
       const metadata = supabaseUser.user_metadata || {};
       const basicUser: User = {
         id: supabaseUser.id,
@@ -224,7 +235,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         createdAt: supabaseUser.created_at,
         emailVerified: !!supabaseUser.email_confirmed_at || !!supabaseUser.confirmed_at,
       };
-      console.log('[Auth] Using basic user (profile failed):', basicUser);
       setUser(basicUser);
       setIsLoading(false);
     }
@@ -304,13 +314,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!isMounted) return;
           console.log('[Auth] Auth state changed:', event, session?.user?.id);
           if (timeoutId) clearTimeout(timeoutId);
+
+          if (event === 'SIGNED_OUT') {
+            setUser(null);
+            setIsLoading(false);
+            return;
+          }
+
           if (session?.user) {
-            // Only load user if we don't already have this user loaded (avoid duplicate loads)
-            if (!user || user.id !== session.user.id) {
+            const current = userRef.current;
+            if (!current || current.id !== session.user.id) {
               await loadUserWithProfile(session.user);
             }
-          } else {
-            setUser(null);
+          } else if (userRef.current) {
+            // Session is null but we have a user — verify before clearing
+            // (Supabase can emit transient null sessions during token refresh)
+            const { data: check } = await supabase.auth.getSession();
+            if (!isMounted) return;
+            if (!check.session) {
+              setUser(null);
+            }
           }
           setIsLoading(false);
         }

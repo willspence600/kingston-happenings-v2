@@ -44,18 +44,27 @@ export async function GET(
   }
 }
 
-// PATCH /api/events/[id] - Update an event (admin only)
+// PATCH /api/events/[id] - Update an event (admin or submitter)
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
+
+    const existing = await prisma.event.findUnique({ where: { id }, select: { submittedById: true } });
+    if (!existing) {
+      return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+    }
+    if (user.role !== 'admin' && existing.submittedById !== user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const body = await request.json();
 
     const event = await prisma.event.update({
@@ -82,18 +91,26 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/events/[id] - Delete an event (admin only)
+// DELETE /api/events/[id] - Delete an event (admin or submitter)
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
+
+    const existing = await prisma.event.findUnique({ where: { id }, select: { submittedById: true } });
+    if (!existing) {
+      return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+    }
+    if (user.role !== 'admin' && existing.submittedById !== user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     await prisma.event.delete({
       where: { id },
