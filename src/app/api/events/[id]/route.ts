@@ -66,10 +66,19 @@ export async function PATCH(
     }
 
     const body = await request.json();
+    const { categories, ...eventData } = body;
 
     const event = await prisma.event.update({
       where: { id },
-      data: body,
+      data: {
+        ...eventData,
+        ...(categories ? {
+          categories: {
+            deleteMany: {},
+            create: (categories as string[]).map((name: string) => ({ name })),
+          },
+        } : {}),
+      },
       include: {
         venue: true,
         categories: true,

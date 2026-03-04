@@ -362,7 +362,7 @@ export default function SubmitEventPage() {
       }
 
       setIsSubmitted(true);
-      console.log('[Submit] Events submitted successfully');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       console.error('[Submit] Error submitting events:', err);
       setError(err instanceof Error ? err.message : 'Failed to submit event(s). Please try again.');
@@ -471,6 +471,7 @@ export default function SubmitEventPage() {
         }
 
         setIsSubmitted(true);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (err) {
         setError('Failed to submit special(s). Please try again.');
       } finally {
