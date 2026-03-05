@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { uploadImage } from '@/lib/storage';
 
 // GET /api/events/[id] - Get a single event
 export async function GET(
@@ -66,12 +67,18 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { categories, ...eventData } = body;
+    const { categories, imageUrl, ...eventData } = body;
+
+    let finalImageUrl = imageUrl;
+    if (imageUrl && typeof imageUrl === 'string' && imageUrl.startsWith('data:')) {
+      finalImageUrl = await uploadImage(imageUrl, id);
+    }
 
     const event = await prisma.event.update({
       where: { id },
       data: {
         ...eventData,
+        ...(finalImageUrl !== undefined ? { imageUrl: finalImageUrl } : {}),
         ...(categories ? {
           categories: {
             deleteMany: {},
