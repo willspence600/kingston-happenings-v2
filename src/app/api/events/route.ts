@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { uploadImage } from '@/lib/storage';
 
 // GET /api/events - Get all events (with filters)
 export async function GET(request: NextRequest) {
@@ -91,7 +92,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Transform to match frontend format
+    // Strip base64 data URLs from bulk responses to prevent massive payloads
     const transformedEvents = events.map((event) => {
+      const safeImageUrl = event.imageUrl && event.imageUrl.startsWith('data:') ? null : event.imageUrl;
       const baseEvent = {
         id: event.id,
         title: event.title,
@@ -101,7 +104,7 @@ export async function GET(request: NextRequest) {
         endTime: event.endTime,
         price: event.price,
         ticketUrl: event.ticketUrl,
-        imageUrl: event.imageUrl,
+        imageUrl: safeImageUrl,
         featured: event.featured,
         status: event.status,
         venue: event.venue,
@@ -266,8 +269,13 @@ export async function POST(request: NextRequest) {
     // Get the day of week from the start date
     const recurrenceDay = isRecurring ? new Date(date + 'T12:00:00').getDay() : null;
 
-    // Create the first (parent) event
-    console.log('[API] Creating event with submittedById:', user.id, 'status:', status);
+    // Upload image to Supabase Storage if it's a base64 data URL
+    let finalImageUrl = imageUrl || null;
+    if (imageUrl && imageUrl.startsWith('data:')) {
+      const tempId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      finalImageUrl = await uploadImage(imageUrl, tempId);
+    }
+
     const parentEvent = await prisma.event.create({
       data: {
         title,
@@ -278,7 +286,7 @@ export async function POST(request: NextRequest) {
         venueId: finalVenueId,
         price,
         ticketUrl,
-        imageUrl,
+        imageUrl: finalImageUrl,
         status,
         submittedById: user.id,
         isRecurring: isRecurring || false,
@@ -311,7 +319,7 @@ export async function POST(request: NextRequest) {
             venueId: finalVenueId,
             price,
             ticketUrl,
-            imageUrl,
+            imageUrl: finalImageUrl,
             status,
             submittedById: user.id,
             isRecurring: true,

@@ -31,7 +31,7 @@ export async function GET() {
       endTime: event.endTime,
       price: event.price,
       ticketUrl: event.ticketUrl,
-      imageUrl: event.imageUrl,
+      imageUrl: event.imageUrl && event.imageUrl.startsWith('data:') ? null : event.imageUrl,
       featured: event.featured,
       status: event.status,
       submittedById: event.submittedById,
