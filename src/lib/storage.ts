@@ -18,8 +18,11 @@ async function ensureBucket() {
 }
 
 /**
- * Upload a base64 data URL to Supabase Storage and return the public URL.
- * If the input is already an https:// URL, returns it as-is.
+ * Upload a base64 data URL to Supabase Storage and return the RELATIVE
+ * public path (e.g. `/storage/v1/object/public/event-images/abc.jpg`).
+ * Relative paths are resolved to absolute URLs at the API layer via
+ * `getAbsoluteImageUrl`, so the storage host can differ per environment.
+ * If the input is already an http(s):// URL, returns it as-is.
  */
 export async function uploadImage(base64DataUrl: string, eventId: string): Promise<string> {
   if (!base64DataUrl) return '';
@@ -46,18 +49,26 @@ export async function uploadImage(base64DataUrl: string, eventId: string): Promi
 
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 
-  const { data } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  return `/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
 /**
- * Delete an image from Supabase Storage given its public URL.
+ * Delete an image from Supabase Storage given its public URL or
+ * relative storage path.
  */
-export async function deleteImage(publicUrl: string): Promise<void> {
-  if (!publicUrl) return;
-  const url = new URL(publicUrl);
-  const parts = url.pathname.split(`/storage/v1/object/public/${BUCKET}/`);
-  if (parts.length < 2) return;
-  const path = parts[1];
-  await supabaseAdmin.storage.from(BUCKET).remove([path]);
+export async function deleteImage(imageUrl: string): Promise<void> {
+  if (!imageUrl) return;
+
+  // Works for both absolute URLs and relative paths: extract the pathname
+  // when it's a valid absolute URL, otherwise use the string directly.
+  let pathname = imageUrl;
+  try {
+    pathname = new URL(imageUrl).pathname;
+  } catch {
+    // Not an absolute URL — treat it as a relative storage path
+  }
+
+  const parts = pathname.split(`/storage/v1/object/public/${BUCKET}/`);
+  if (parts.length < 2 || !parts[1]) return;
+  await supabaseAdmin.storage.from(BUCKET).remove([parts[1]]);
 }

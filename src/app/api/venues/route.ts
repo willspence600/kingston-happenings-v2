@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { getAbsoluteImageUrl } from '@/utils/url';
 
 // GET /api/venues - Get all venues
 export async function GET(request: NextRequest) {
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
         address: v.address,
         neighborhood: v.neighborhood,
         website: v.website,
-        imageUrl: v.imageUrl,
+        imageUrl: getAbsoluteImageUrl(v.imageUrl),
         status: v.status,
         promotionTier: v.promotionTier || 'standard',
         eventCount: v._count.events,

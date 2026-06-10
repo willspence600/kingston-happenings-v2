@@ -3,6 +3,7 @@ import "./globals.css";
 import { Navigation, Footer } from "@/components";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { EventsProvider } from "@/contexts/EventsContext";
+import BandwidthInterceptor from "@/components/dev/BandwidthInterceptor";
 
 export const metadata: Metadata = {
   title: "Kingston Happenings | Events in Kingston, Ontario",
@@ -18,6 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen flex flex-col">
+        {process.env.NODE_ENV === "development" && <BandwidthInterceptor />}
         <AuthProvider>
           <EventsProvider>
             <Navigation />

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { getAbsoluteImageUrl } from '@/utils/url';
 
 // GET /api/venues/[id] - Get a single venue
 export async function GET(
@@ -39,8 +40,10 @@ export async function GET(
     return NextResponse.json({
       venue: {
         ...venue,
+        imageUrl: getAbsoluteImageUrl(venue.imageUrl),
         events: venue.events.map((e) => ({
           ...e,
+          imageUrl: getAbsoluteImageUrl(e.imageUrl),
           categories: e.categories.map((c) => c.name),
           likeCount: e._count.likes,
         })),

@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { uploadImage } from '@/lib/storage';
+import { getAbsoluteImageUrl } from '@/utils/url';
 
 // GET /api/events - Get all events (with filters)
 export async function GET(request: NextRequest) {
@@ -104,10 +105,10 @@ export async function GET(request: NextRequest) {
         endTime: event.endTime,
         price: event.price,
         ticketUrl: event.ticketUrl,
-        imageUrl: safeImageUrl,
+        imageUrl: getAbsoluteImageUrl(safeImageUrl),
         featured: event.featured,
         status: event.status,
-        venue: event.venue,
+        venue: { ...event.venue, imageUrl: getAbsoluteImageUrl(event.venue.imageUrl) },
         categories: event.categories.map((c) => c.name),
         likeCount: event._count.likes,
         isRecurring: event.isRecurring,
@@ -269,11 +270,15 @@ export async function POST(request: NextRequest) {
     // Get the day of week from the start date
     const recurrenceDay = isRecurring ? new Date(date + 'T12:00:00').getDay() : null;
 
-    // Upload image to Supabase Storage if it's a base64 data URL
-    let finalImageUrl = imageUrl || null;
-    if (imageUrl && imageUrl.startsWith('data:')) {
-      const tempId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      finalImageUrl = await uploadImage(imageUrl, tempId);
+    // Food & drink specials do not use images
+    const isFoodDeal = (categories as string[]).includes('food-deal');
+    let finalImageUrl: string | null = null;
+    if (!isFoodDeal) {
+      finalImageUrl = imageUrl || null;
+      if (imageUrl && imageUrl.startsWith('data:')) {
+        const tempId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        finalImageUrl = await uploadImage(imageUrl, tempId);
+      }
     }
 
     const parentEvent = await prisma.event.create({
@@ -345,11 +350,11 @@ export async function POST(request: NextRequest) {
       endTime: parentEvent.endTime,
       price: parentEvent.price,
       ticketUrl: parentEvent.ticketUrl,
-      imageUrl: parentEvent.imageUrl,
+      imageUrl: getAbsoluteImageUrl(parentEvent.imageUrl),
       featured: parentEvent.featured,
       status: parentEvent.status,
       submittedById: parentEvent.submittedById,
-      venue: parentEvent.venue,
+      venue: { ...parentEvent.venue, imageUrl: getAbsoluteImageUrl(parentEvent.venue.imageUrl) },
       categories: parentEvent.categories.map((c) => c.name),
       isRecurring: parentEvent.isRecurring,
       recurrencePattern: parentEvent.recurrencePattern,

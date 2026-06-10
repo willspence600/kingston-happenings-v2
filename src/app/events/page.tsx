@@ -10,7 +10,6 @@ import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { EventCategory, categoryLabels, categoryColors, categoryColorsMuted, categoryColorsActive, browseCategories } from '@/types/event';
-
 type TabType = 'all' | 'events' | 'deals';
 type PastEventsRange = 'none' | 'week' | 'month' | '3months' | '6months';
 
@@ -838,17 +837,9 @@ function EventsContent() {
                                       className="flex items-center gap-3 flex-1 min-w-0"
                                     >
                                       <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                        {deal.imageUrl ? (
-                                          <img
-                                            src={deal.imageUrl}
-                                            alt={deal.title}
-                                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                          />
-                                        ) : (
-                                          <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                                            <Utensils size={18} className="text-primary" />
-                                          </div>
-                                        )}
+                                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
+                                          <Utensils size={18} className="text-primary" />
+                                        </div>
                                       </div>
                                       <div className="flex-1 min-w-0">
                                         <h5 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1 text-base">
@@ -1341,17 +1332,9 @@ function EventsContent() {
                                       className="flex items-center gap-3 flex-1 min-w-0"
                                     >
                                       <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                        {deal.imageUrl ? (
-                                          <img
-                                            src={deal.imageUrl}
-                                            alt={deal.title}
-                                            className="w-full h-full object-cover"
-                                          />
-                                        ) : (
-                                          <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                                            <Utensils size={18} className="text-primary" />
-                                          </div>
-                                        )}
+                                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
+                                          <Utensils size={18} className="text-primary" />
+                                        </div>
                                       </div>
                                       <div className="flex-1 min-w-0">
                                         <h5 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1 text-base">

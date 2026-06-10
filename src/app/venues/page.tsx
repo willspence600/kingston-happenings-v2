@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Search, MapPin, Calendar, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
+import SmartImage from '@/components/ui/SmartImage';
 
 export default function VenuesPage() {
   const { venues, getEventsByVenue } = useEvents();
@@ -61,12 +62,13 @@ export default function VenuesPage() {
                 className="group bg-card border border-border rounded-xl overflow-hidden card-hover"
               >
                 {/* Venue Image/Placeholder */}
-                <div className="h-40 bg-gradient-to-br from-primary/10 to-secondary/10 overflow-hidden">
+                <div className="relative h-40 bg-gradient-to-br from-primary/10 to-secondary/10 overflow-hidden">
                   {venue.imageUrl ? (
-                    <img
+                    <SmartImage
                       src={venue.imageUrl}
                       alt={venue.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 400px"
+                      className="group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">

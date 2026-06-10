@@ -8,6 +8,7 @@ import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
+import SmartImage from '@/components/ui/SmartImage';
 
 interface EventCardProps {
   event: Event;
@@ -107,10 +108,11 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
           <div className="relative rounded-2xl overflow-hidden bg-card border border-border card-hover">
             <div className="relative h-48 sm:h-56 bg-muted">
               {event.imageUrl ? (
-                <img
+                <SmartImage
                   src={event.imageUrl}
                   alt={event.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 400px"
+                  className="group-hover:scale-105 transition-transform duration-500"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
@@ -190,10 +192,11 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
         <div className={`rounded-xl overflow-hidden bg-card border border-border card-hover ${isCancelled ? 'opacity-75' : ''}`}>
           <div className="relative h-40 bg-muted">
             {event.imageUrl ? (
-              <img
+              <SmartImage
                 src={event.imageUrl}
                 alt={event.title}
-                className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ${isCancelled ? 'grayscale' : ''}`}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 400px"
+                className={`group-hover:scale-105 transition-transform duration-500 ${isCancelled ? 'grayscale' : ''}`}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
