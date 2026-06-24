@@ -56,7 +56,7 @@ model Event {
   updatedAt DateTime @updatedAt
 
   // Relations
-  venue         Venue           @relation(fields: [venueId], references: [id])
+  venue         Venue           @relation(fields: [venueId], references: [id], onDelete: Cascade)
   venueId       String
   // submittedById stores Supabase user ID (UUID), not Prisma User ID (CUID)
   // We store it as a plain string without foreign key constraint since Supabase users

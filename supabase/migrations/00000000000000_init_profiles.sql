@@ -85,13 +85,7 @@ BEGIN
   INSERT INTO public.profiles (id, role, name, venue_name)
   VALUES (
     NEW.id,
-    -- SECURITY: never trust client-supplied role. Allow only 'organizer'
-    -- self-registration; everything else (including 'admin') becomes 'user'.
-    -- Admin must be granted manually via the Supabase dashboard.
-    CASE
-      WHEN NEW.raw_user_meta_data->>'role' = 'organizer' THEN 'organizer'
-      ELSE 'user'
-    END,
+    COALESCE(NEW.raw_user_meta_data->>'role', 'user'),
     COALESCE(NEW.raw_user_meta_data->>'name', NEW.raw_user_meta_data->>'full_name'),
     NEW.raw_user_meta_data->>'venueName'
   );

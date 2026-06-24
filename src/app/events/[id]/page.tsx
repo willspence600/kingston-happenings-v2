@@ -19,13 +19,15 @@ import {
   Edit,
   Ban,
   Trash2,
-  Loader2
+  Loader2,
+  Utensils
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { categoryLabels, categoryColors } from '@/types/event';
 import { EventCard, Toast } from '@/components';
+import SmartImage from '@/components/ui/SmartImage';
 
 export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -39,38 +41,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   
   const event = getEventById(id);
 
-  if (!event) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="font-display text-3xl text-foreground mb-4">Event Not Found</h1>
-          <p className="text-muted-foreground mb-6">The event you&apos;re looking for doesn&apos;t exist.</p>
-          <Link
-            href="/events"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg"
-          >
-            <ArrowLeft size={18} />
-            Back to Events
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const formattedDate = format(parseISO(event.date), 'EEEE, MMMM d, yyyy');
-  const formattedStartTime = format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
-  const formattedEndTime = event.endTime 
-    ? format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')
-    : null;
-
-  const otherVenueEvents = getEventsByVenue(event.venue.id)
-    .filter(e => e.id !== event.id && e.date >= format(new Date(), 'yyyy-MM-dd'))
-    .slice(0, 3);
-
-  const liked = isLiked(event.id);
-  const likeCount = getLikeCount(event.id);
-
   const handleShare = useCallback(async () => {
+    if (!event) return;
     const url = window.location.href;
     
     // Try native share first (mobile devices)
@@ -111,7 +83,39 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       setToastMessage('Could not copy link');
       setShowToast(true);
     }
-  }, [event.title, event.venue.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.title, event?.venue?.name]);
+
+  if (!event) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="font-display text-3xl text-foreground mb-4">Event Not Found</h1>
+          <p className="text-muted-foreground mb-6">The event you&apos;re looking for doesn&apos;t exist.</p>
+          <Link
+            href="/events"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg"
+          >
+            <ArrowLeft size={18} />
+            Back to Events
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const formattedDate = format(parseISO(event.date), 'EEEE, MMMM d, yyyy');
+  const formattedStartTime = format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
+  const formattedEndTime = event.endTime 
+    ? format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')
+    : null;
+
+  const otherVenueEvents = getEventsByVenue(event.venue.id)
+    .filter(e => e.id !== event.id && e.date >= format(new Date(), 'yyyy-MM-dd'))
+    .slice(0, 3);
+
+  const liked = isLiked(event.id);
+  const likeCount = getLikeCount(event.id);
 
   const handleLike = () => {
     if (!user) {
@@ -170,15 +174,20 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     <div className="min-h-screen">
       {/* Hero Image */}
       <div className="relative h-64 sm:h-80 lg:h-96 bg-muted">
-        {event.imageUrl ? (
-          <img
+        {event.imageUrl && !event.categories.includes('food-deal') ? (
+          <SmartImage
             src={event.imageUrl}
             alt={event.title}
-            className="w-full h-full object-cover"
+            sizes="100vw"
+            priority
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
-            <Calendar size={64} className="text-muted-foreground" />
+            {event.categories.includes('food-deal') ? (
+              <Utensils size={64} className="text-muted-foreground" />
+            ) : (
+              <Calendar size={64} className="text-muted-foreground" />
+            )}
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { getAbsoluteImageUrl } from '@/utils/url';
 
 // GET /api/events/my-submissions - Get events submitted by the current user
 export async function GET() {
@@ -31,12 +32,12 @@ export async function GET() {
       endTime: event.endTime,
       price: event.price,
       ticketUrl: event.ticketUrl,
-      imageUrl: event.imageUrl && event.imageUrl.startsWith('data:') ? null : event.imageUrl,
+      imageUrl: getAbsoluteImageUrl(event.imageUrl && event.imageUrl.startsWith('data:') ? null : event.imageUrl),
       featured: event.featured,
       status: event.status,
       submittedById: event.submittedById,
       createdAt: event.createdAt,
-      venue: event.venue,
+      venue: { ...event.venue, imageUrl: getAbsoluteImageUrl(event.venue.imageUrl) },
       categories: event.categories.map((c) => c.name),
       likeCount: event._count.likes,
       isRecurring: event.isRecurring,

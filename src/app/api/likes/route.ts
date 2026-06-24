@@ -2,24 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 
-// GET /api/likes - Get current user's liked event IDs and like counts for all events
+// GET /api/likes - Get the authenticated user's liked event IDs
 export async function GET() {
   try {
     const user = await getCurrentUser();
-    
-    // Get like counts for all events (visible to everyone)
-    const likeCounts = await prisma.like.groupBy({
-      by: ['eventId'],
-      _count: { eventId: true },
-    });
-
-    const likeCountMap: Record<string, number> = {};
-    likeCounts.forEach((lc) => {
-      likeCountMap[lc.eventId] = lc._count.eventId;
-    });
 
     if (!user) {
-      const res = NextResponse.json({ likes: [], likeCounts: likeCountMap });
+      const res = NextResponse.json({ likes: [] });
       res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
       return res;
     }
@@ -29,10 +18,7 @@ export async function GET() {
       select: { eventId: true },
     });
 
-    const res = NextResponse.json({
-      likes: likes.map((l) => l.eventId),
-      likeCounts: likeCountMap,
-    });
+    const res = NextResponse.json({ likes: likes.map((l) => l.eventId) });
     res.headers.set('Cache-Control', 'private, max-age=30');
     return res;
   } catch (error) {

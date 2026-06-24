@@ -7,6 +7,7 @@ import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
 import { useState, useRef } from 'react';
+import SmartImage from '@/components/ui/SmartImage';
 
 // Filter button config
 const filterButtons: { id: EventCategory; label: string; icon: typeof Music }[] = [
@@ -197,10 +198,11 @@ export default function HomePage() {
                       className="group relative aspect-square rounded-xl overflow-hidden bg-muted border border-border hover:border-primary/50 transition-all hover:shadow-lg"
                     >
                       {event.imageUrl ? (
-                        <img
+                        <SmartImage
                           src={event.imageUrl}
                           alt={event.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          sizes="(max-width: 1024px) 33vw, 280px"
+                          className="group-hover:scale-105 transition-transform duration-300"
                         />
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
@@ -266,17 +268,9 @@ export default function HomePage() {
                       className="group flex items-center gap-4 p-3 rounded-xl bg-card border border-border hover:border-primary/50 transition-all hover:shadow-md"
                     >
                       <div className="w-16 h-16 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                        {deal.imageUrl ? (
-                          <img
-                            src={deal.imageUrl}
-                            alt={deal.title}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-gradient-to-br from-primary/20 to-orange-500/20 flex items-center justify-center">
-                            <Utensils size={20} className="text-primary" />
-                          </div>
-                        )}
+                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-orange-500/20 flex items-center justify-center">
+                          <Utensils size={20} className="text-primary" />
+                        </div>
                       </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1">
@@ -339,10 +333,11 @@ export default function HomePage() {
                   className="group relative aspect-[16/9] rounded-2xl overflow-hidden bg-muted border border-border hover:border-primary/50 transition-all hover:shadow-xl"
                 >
                   {event.imageUrl ? (
-                    <img
+                    <SmartImage
                       src={event.imageUrl}
                       alt={event.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      sizes="(max-width: 640px) 100vw, 50vw"
+                      className="group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
                     <div className="w-full h-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">

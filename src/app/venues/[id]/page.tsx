@@ -187,7 +187,7 @@ export default function VenueDetailPage({ params }: { params: Promise<{ id: stri
                             )}
                             <span className="text-muted-foreground text-sm flex items-center gap-1">
                               <Calendar size={14} />
-                              {format(new Date(event.date), 'MMM d')} • {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
+                              {format(parseISO(event.date), 'MMM d')} • {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
                               {event.endTime && ` - ${format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')}`}
                             </span>
                           </div>

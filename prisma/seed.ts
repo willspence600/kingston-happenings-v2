@@ -150,7 +150,7 @@ async function main() {
         venueId: data.venueId,
         price: data.price,
         ticketUrl: data.ticketUrl,
-        imageUrl: data.imageUrl,
+        imageUrl: data.categories.includes('food-deal') ? null : data.imageUrl,
         featured: data.featured || false,
         status: 'approved',
         categories: {
@@ -1005,7 +1005,6 @@ async function main() {
       venueId: 'venue-tir-nan-og',
       categories: ['concert', 'food-deal'],
       price: '$35',
-      imageUrl: 'https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=800',
     }),
     createDemoEvent('kids-art', {
       title: "Kids' Art Workshop",

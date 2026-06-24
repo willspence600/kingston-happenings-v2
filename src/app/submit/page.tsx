@@ -28,6 +28,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { DatePicker, VenueSelector } from '@/components';
 import { addDays, parseISO, format } from 'date-fns';
+import { compressImage } from '@/utils/compression';
 
 // Generate a unique ID (compatible with older browsers)
 const generateId = (): string => {
@@ -119,8 +120,6 @@ interface SpecialFormData {
   newVenueAddress: string;
   categories: ('food' | 'drink')[];
   price: string;
-  imageFile: File | null;
-  imagePreview: string;
   isAllDay: boolean;
   // Recurring fields
   isRecurring: boolean;
@@ -164,8 +163,6 @@ const createEmptySpecialForm = (): SpecialFormData => ({
   newVenueAddress: '',
   categories: [],
   price: '',
-  imageFile: null,
-  imagePreview: '',
   isAllDay: false,
   isRecurring: false,
   recurrencePattern: 'none',
@@ -224,45 +221,31 @@ export default function SubmitEventPage() {
     ));
   };
 
-  const handleImageDrop = useCallback((formId: string, e: React.DragEvent<HTMLDivElement>, isSpecial = false) => {
+  const handleImageDrop = useCallback((formId: string, e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (file && file.type.startsWith('image/')) {
-      handleImageSelect(formId, file, isSpecial);
+      handleImageSelect(formId, file);
     }
   }, []);
 
-  const handleImageSelect = (formId: string, file: File, isSpecial = false) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (isSpecial) {
-        updateSpecialForm(formId, {
-          imageFile: file,
-          imagePreview: e.target?.result as string
-        });
-      } else {
-      updateForm(formId, {
-        imageFile: file,
-        imagePreview: e.target?.result as string
-      });
-      }
-    };
-    reader.readAsDataURL(file);
+  const handleImageSelect = async (formId: string, file: File) => {
+    const compressed = await compressImage(file);
+    updateForm(formId, {
+      imageFile: file,
+      imagePreview: compressed
+    });
   };
 
-  const handleFileInputChange = (formId: string, e: React.ChangeEvent<HTMLInputElement>, isSpecial = false) => {
+  const handleFileInputChange = (formId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      handleImageSelect(formId, file, isSpecial);
+      handleImageSelect(formId, file);
     }
   };
 
-  const removeImage = (formId: string, isSpecial = false) => {
-    if (isSpecial) {
-      updateSpecialForm(formId, { imageFile: null, imagePreview: '' });
-    } else {
+  const removeImage = (formId: string) => {
     updateForm(formId, { imageFile: null, imagePreview: '' });
-    }
     if (fileInputRefs.current[formId]) {
       fileInputRefs.current[formId]!.value = '';
     }
@@ -318,8 +301,8 @@ export default function SubmitEventPage() {
 
       // Validate recurrence end date is within 52 weeks
       if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
-        const startDate = new Date(form.date);
-        const endDate = new Date(form.recurrenceEndDate);
+        const startDate = parseISO(form.date);
+        const endDate = parseISO(form.recurrenceEndDate);
         const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
         if (weeksDiff > 52) {
           setError(`The recurrence period for "${form.title || 'untitled event'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
@@ -395,8 +378,8 @@ export default function SubmitEventPage() {
 
         // Validate recurrence end date is within 52 weeks
         if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
-          const startDate = new Date(form.date);
-          const endDate = new Date(form.recurrenceEndDate);
+          const startDate = parseISO(form.date);
+          const endDate = parseISO(form.recurrenceEndDate);
           const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
           if (weeksDiff > 52) {
             setError(`The recurrence period for "${form.title || 'untitled special'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
@@ -410,8 +393,6 @@ export default function SubmitEventPage() {
       try {
         // Submit all specials
         for (const form of specialForms) {
-          const imageUrl = form.imagePreview || undefined;
-
           // Convert special categories to EventCategory format
           // Store both 'food-deal' (for general filtering) and 'food'/'drink' (for specific filtering)
           const categories: EventCategory[] = ['food-deal'];
@@ -422,18 +403,18 @@ export default function SubmitEventPage() {
           if (form.isRecurring && form.recurrencePattern === 'days' && form.recurringDays.length > 0) {
             // For "days" pattern, create a separate event for each selected day
             for (const day of form.recurringDays) {
-              // Calculate the first occurrence date for this day
-              const startDate = new Date(form.date);
+              // Calculate the first occurrence date for this day (local-time safe)
+              const baseDate = parseISO(form.date);
               const dayIndex = dayNames.indexOf(day);
-              const currentDayIndex = startDate.getDay();
+              const currentDayIndex = baseDate.getDay();
               let daysToAdd = dayIndex - currentDayIndex;
               if (daysToAdd < 0) daysToAdd += 7;
-              startDate.setDate(startDate.getDate() + daysToAdd);
+              const occurrenceDate = addDays(baseDate, daysToAdd);
 
               await submitEvent({
                 title: form.title,
                 description: form.description,
-                date: startDate.toISOString().split('T')[0],
+                date: format(occurrenceDate, 'yyyy-MM-dd'),
                 startTime: form.startTime,
                 endTime: form.endTime || undefined,
                 venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
@@ -442,7 +423,6 @@ export default function SubmitEventPage() {
                 categories,
                 price: form.price || undefined,
                 ticketUrl: undefined,
-                imageUrl,
                 isRecurring: true,
                 recurrencePattern: 'weekly',
                 recurrenceEndDate: form.recurrenceEndDate || undefined,
@@ -462,7 +442,6 @@ export default function SubmitEventPage() {
               categories,
               price: form.price || undefined,
               ticketUrl: undefined,
-              imageUrl,
               isRecurring: form.isRecurring,
               recurrencePattern: form.isRecurring && form.recurrencePattern === 'weekly' ? 'weekly' : undefined,
               recurrenceEndDate: form.isRecurring ? (form.recurrenceEndDate || undefined) : undefined,
@@ -1508,57 +1487,9 @@ export default function SubmitEventPage() {
                     className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    Describe the special pricing (e.g., "$5 Pints", "50% Off", "Buy One Get One")
+                    Describe the special pricing (e.g., &quot;$5 Pints&quot;, &quot;50% Off&quot;, &quot;Buy One Get One&quot;)
                   </p>
                 </div>
-              </section>
-
-              {/* Image Upload */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <Upload size={20} className="text-primary" />
-                  Special Image
-                </h3>
-                
-                {formData.imagePreview ? (
-                  <div className="relative rounded-xl overflow-hidden">
-                    <img
-                      src={formData.imagePreview}
-                      alt="Special preview"
-                      className="w-full h-48 object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeImage(formData.id, true)}
-                      className="absolute top-2 right-2 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => handleImageDrop(formData.id, e, true)}
-                    onClick={() => fileInputRefs.current[formData.id]?.click()}
-                    className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
-                  >
-                    <Upload size={32} className="mx-auto text-muted-foreground mb-3" />
-                    <p className="text-sm text-foreground font-medium mb-1">
-                      Drop an image here or click to upload
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      PNG, JPG, GIF up to 5MB. Recommended: 800x600px
-                    </p>
-                  </div>
-                )}
-                
-                <input
-                  type="file"
-                  ref={(el) => { fileInputRefs.current[formData.id] = el; }}
-                  onChange={(e) => handleFileInputChange(formData.id, e, true)}
-                  accept="image/*"
-                  className="hidden"
-                />
               </section>
 
               {formIndex < specialForms.length - 1 && (

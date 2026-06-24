@@ -23,6 +23,7 @@ import { categoryLabels, EventCategory, browseCategories } from '@/types/event';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { DatePicker, VenueSelector } from '@/components';
+import { compressImage } from '@/utils/compression';
 
 const normalizeUrl = (url: string): string => {
   if (!url) return '';
@@ -44,6 +45,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const event = getEventById(id);
+  const isFoodDeal = event?.categories.includes('food-deal') ?? false;
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -51,6 +53,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [venueId, setVenueId] = useState('');
+  const [newVenueName, setNewVenueName] = useState('');
+  const [newVenueAddress, setNewVenueAddress] = useState('');
   const [categories, setCategories] = useState<EventCategory[]>([]);
   const [priceType, setPriceType] = useState<PriceType>('na');
   const [priceAmount, setPriceAmount] = useState('');
@@ -98,10 +102,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     );
   };
 
-  const handleImageSelect = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => setImagePreview(e.target?.result as string);
-    reader.readAsDataURL(file);
+  const handleImageSelect = async (file: File) => {
+    const compressed = await compressImage(file);
+    setImagePreview(compressed);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -131,10 +134,11 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         startTime: isAllDay ? '00:00' : startTime,
         endTime: isAllDay ? null : (endTime || null),
         venueId,
+        ...(venueId === 'new' ? { newVenueName, newVenueAddress } : {}),
         categories,
         price: priceString || null,
         ticketUrl: normalizeUrl(ticketUrl) || null,
-        imageUrl: imagePreview || null,
+        ...(isFoodDeal ? {} : { imageUrl: imagePreview || null }),
       };
 
       const res = await fetch(`/api/events/${id}`, {
@@ -357,11 +361,11 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             <VenueSelector
               venues={venues}
               selectedVenueId={venueId}
-              newVenueName=""
-              newVenueAddress=""
+              newVenueName={newVenueName}
+              newVenueAddress={newVenueAddress}
               onVenueSelect={setVenueId}
-              onNewVenueNameChange={() => {}}
-              onNewVenueAddressChange={() => {}}
+              onNewVenueNameChange={setNewVenueName}
+              onNewVenueAddressChange={setNewVenueAddress}
               required
               id="venue"
             />
@@ -446,47 +450,48 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                 </div>
               </div>
 
-              {/* Image */}
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">Event Image</label>
-                {imagePreview ? (
-                  <div className="relative rounded-xl overflow-hidden">
-                    <img src={imagePreview} alt="Event preview" className="w-full h-48 object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setImagePreview('');
-                        if (fileInputRef.current) fileInputRef.current.value = '';
+              {!isFoodDeal && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">Event Image</label>
+                  {imagePreview ? (
+                    <div className="relative rounded-xl overflow-hidden">
+                      <img src={imagePreview} alt="Event preview" className="w-full h-48 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImagePreview('');
+                          if (fileInputRef.current) fileInputRef.current.value = '';
+                        }}
+                        className="absolute top-2 right-2 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const file = e.dataTransfer.files[0];
+                        if (file?.type.startsWith('image/')) handleImageSelect(file);
                       }}
-                      className="absolute top-2 right-2 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
                     >
-                      <X size={16} />
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const file = e.dataTransfer.files[0];
-                      if (file?.type.startsWith('image/')) handleImageSelect(file);
-                    }}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
-                  >
-                    <Upload size={32} className="mx-auto text-muted-foreground mb-3" />
-                    <p className="text-sm text-foreground font-medium mb-1">Drop an image here or click to upload</p>
-                    <p className="text-xs text-muted-foreground">PNG, JPG, GIF up to 5MB</p>
-                  </div>
-                )}
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }}
-                  accept="image/*"
-                  className="hidden"
-                />
-              </div>
+                      <Upload size={32} className="mx-auto text-muted-foreground mb-3" />
+                      <p className="text-sm text-foreground font-medium mb-1">Drop an image here or click to upload</p>
+                      <p className="text-xs text-muted-foreground">PNG, JPG, GIF up to 5MB</p>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                </div>
+              )}
             </div>
           </section>
 

@@ -30,6 +30,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
 import { Modal, Toast } from '@/components';
+import { compressImage } from '@/utils/compression';
+import SmartImage from '@/components/ui/SmartImage';
 
 interface PendingVenue {
   id: string;
@@ -95,17 +97,13 @@ function EditVenueForm({
     setImagePreview(venue.imageUrl || '');
   }, [venue]);
 
-  const handleImageSelect = (file: File) => {
+  const handleImageSelect = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
-      setImagePreview(dataUrl);
-      setFormData({ ...formData, imageUrl: dataUrl });
-    };
-    reader.readAsDataURL(file);
+    const compressed = await compressImage(file);
+    setImagePreview(compressed);
+    setFormData({ ...formData, imageUrl: compressed });
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -789,12 +787,12 @@ export default function AdminPage() {
                       <div className="p-6">
                         <div className="flex flex-col lg:flex-row lg:items-start gap-6">
                           {/* Event Image */}
-                          <div className="w-full lg:w-48 h-32 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+                          <div className="relative w-full lg:w-48 h-32 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                             {event.imageUrl ? (
-                              <img
+                              <SmartImage
                                 src={event.imageUrl}
                                 alt={event.title}
-                                className="w-full h-full object-cover"
+                                sizes="(max-width: 1024px) 100vw, 192px"
                               />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
@@ -992,12 +990,12 @@ export default function AdminPage() {
                               className="bg-card border border-border rounded-xl p-4 flex items-center justify-between gap-4"
                             >
                               <div className="flex items-center gap-4 flex-1 min-w-0">
-                                <div className="w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+                                <div className="relative w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                                   {event.imageUrl ? (
-                                    <img
+                                    <SmartImage
                                       src={event.imageUrl}
                                       alt={event.title}
-                                      className="w-full h-full object-cover"
+                                      sizes="64px"
                                     />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
@@ -1105,17 +1103,9 @@ export default function AdminPage() {
                             >
                               <div className="flex items-center gap-4 flex-1 min-w-0">
                                 <div className="w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                  {special.imageUrl ? (
-                                    <img
-                                      src={special.imageUrl}
-                                      alt={special.title}
-                                      className="w-full h-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
-                                      <Utensils size={16} className="text-muted-foreground" />
-                                    </div>
-                                  )}
+                                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
+                                    <Utensils size={16} className="text-muted-foreground" />
+                                  </div>
                                 </div>
                                 <div className="min-w-0">
                                   <h3 className="font-medium text-foreground truncate">{special.title}</h3>
@@ -1199,12 +1189,12 @@ export default function AdminPage() {
                   className="bg-card border border-border rounded-xl p-4 flex items-center justify-between gap-4"
                 >
                   <div className="flex items-center gap-4 flex-1 min-w-0">
-                    <div className="w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+                    <div className="relative w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                       {venue.imageUrl ? (
-                        <img
+                        <SmartImage
                           src={venue.imageUrl}
                           alt={venue.name}
-                          className="w-full h-full object-cover"
+                          sizes="64px"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
@@ -1279,12 +1269,12 @@ export default function AdminPage() {
                     className="bg-card border border-border rounded-xl p-4 flex items-center justify-between gap-4"
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                      <div className="w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+                      <div className="relative w-16 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                         {venue.imageUrl ? (
-                          <img
+                          <SmartImage
                             src={venue.imageUrl}
                             alt={venue.name}
-                            className="w-full h-full object-cover"
+                            sizes="64px"
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">

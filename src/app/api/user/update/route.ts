@@ -14,7 +14,7 @@ export async function PUT(request: NextRequest) {
 
     const supabase = await createSupabaseServerClient();
 
-    // Update user metadata in Supabase
+    // Update user metadata in Supabase Auth
     const { data, error } = await supabase.auth.updateUser({
       data: {
         name,
@@ -24,6 +24,17 @@ export async function PUT(request: NextRequest) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    // Persist the name to public.profiles, since getCurrentUser() reads
+    // profiles.name first. Without this the displayed name stays stale.
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ name })
+      .eq('id', user.id);
+
+    if (profileError) {
+      return NextResponse.json({ error: profileError.message }, { status: 400 });
     }
 
     const metadata = data.user?.user_metadata || {};

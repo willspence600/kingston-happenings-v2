@@ -9,6 +9,7 @@ import { useEvents } from '@/contexts/EventsContext';
 import { EventCard, DatePicker } from '@/components';
 import { format, parseISO, startOfDay, isWithinInterval, isAfter, isEqual, isToday, isTomorrow, addDays } from 'date-fns';
 import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
+import SmartImage from '@/components/ui/SmartImage';
 
 interface SubmittedEvent {
   id: string;
@@ -663,17 +664,9 @@ export default function MyEventsPage() {
                                             className="flex items-center gap-3 flex-1 min-w-0"
                                           >
                                             <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                              {deal.imageUrl ? (
-                                                <img
-                                                  src={deal.imageUrl}
-                                                  alt={deal.title}
-                                                  className="w-full h-full object-cover"
-                                                />
-                                              ) : (
-                                                <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                                                  <Utensils size={18} className="text-primary" />
-                                                </div>
-                                              )}
+                                              <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
+                                                <Utensils size={18} className="text-primary" />
+                                              </div>
                                             </div>
                                             <div className="flex-1 min-w-0">
                                               <h5 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1 text-base">
@@ -835,17 +828,9 @@ export default function MyEventsPage() {
                                         className="flex items-center gap-3 flex-1 min-w-0"
                                       >
                                         <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                          {deal.imageUrl ? (
-                                            <img
-                                              src={deal.imageUrl}
-                                              alt={deal.title}
-                                              className="w-full h-full object-cover"
-                                            />
-                                          ) : (
-                                            <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                                              <Utensils size={18} className="text-primary" />
-                                            </div>
-                                          )}
+                                          <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
+                                            <Utensils size={18} className="text-primary" />
+                                          </div>
                                         </div>
                                         <div className="flex-1 min-w-0">
                                           <h5 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1 text-lg">
@@ -1065,9 +1050,9 @@ function SubmissionRow({
     <div className={`bg-card ${isChild ? '' : 'border border-border rounded-xl'} overflow-hidden`}>
       <div className={`p-6 ${isChild ? 'pl-10' : ''}`}>
         <div className="flex flex-col lg:flex-row lg:items-start gap-6">
-          <div className="w-full lg:w-40 h-28 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+          <div className="relative w-full lg:w-40 h-28 rounded-lg overflow-hidden bg-muted flex-shrink-0">
             {event.imageUrl ? (
-              <img src={event.imageUrl} alt={event.title} className="w-full h-full object-cover" />
+              <SmartImage src={event.imageUrl} alt={event.title} sizes="(max-width: 1024px) 100vw, 160px" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
                 <Calendar size={28} className="text-muted-foreground" />
