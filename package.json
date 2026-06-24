@@ -9,6 +9,7 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:seed": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
+    "db:seed-two-weeks": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed-two-weeks.ts",
     "db:clear-demos": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/clear-demos.ts",
     "db:clear-special-images": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/clear-special-images.ts",
     "db:reset": "npx prisma migrate reset --force",
