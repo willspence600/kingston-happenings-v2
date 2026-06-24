@@ -53,6 +53,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [venueId, setVenueId] = useState('');
+  const [newVenueName, setNewVenueName] = useState('');
+  const [newVenueAddress, setNewVenueAddress] = useState('');
   const [categories, setCategories] = useState<EventCategory[]>([]);
   const [priceType, setPriceType] = useState<PriceType>('na');
   const [priceAmount, setPriceAmount] = useState('');
@@ -132,6 +134,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         startTime: isAllDay ? '00:00' : startTime,
         endTime: isAllDay ? null : (endTime || null),
         venueId,
+        ...(venueId === 'new' ? { newVenueName, newVenueAddress } : {}),
         categories,
         price: priceString || null,
         ticketUrl: normalizeUrl(ticketUrl) || null,
@@ -358,11 +361,11 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             <VenueSelector
               venues={venues}
               selectedVenueId={venueId}
-              newVenueName=""
-              newVenueAddress=""
+              newVenueName={newVenueName}
+              newVenueAddress={newVenueAddress}
               onVenueSelect={setVenueId}
-              onNewVenueNameChange={() => {}}
-              onNewVenueAddressChange={() => {}}
+              onNewVenueNameChange={setNewVenueName}
+              onNewVenueAddressChange={setNewVenueAddress}
               required
               id="venue"
             />

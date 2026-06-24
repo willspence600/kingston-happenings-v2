@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { User as SupabaseUser, AuthError, AuthChangeEvent, Session } from '@supabase/supabase-js';
+import { User as SupabaseUser, AuthError } from '@supabase/supabase-js';
 
 export type UserRole = 'user' | 'organizer' | 'admin';
 
@@ -131,6 +131,30 @@ function buildUser(supabaseUser: SupabaseUser, profile: Profile | null): User {
   };
 }
 
+const AUTH_CACHE_KEY = 'kh_auth_user';
+
+function readUserCache(): User | null {
+  try {
+    const raw = localStorage.getItem(AUTH_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as User;
+  } catch {
+    return null;
+  }
+}
+
+function writeUserCache(user: User | null) {
+  try {
+    if (user) {
+      localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(AUTH_CACHE_KEY);
+    }
+  } catch {
+    // Storage quota or private browsing - silently ignore.
+  }
+}
+
 // Helper to format auth errors into user-friendly messages
 function formatAuthError(error: AuthError): string {
   switch (error.message) {
@@ -152,12 +176,23 @@ function formatAuthError(error: AuthError): string {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return readUserCache();
+  });
+  const [isLoading, setIsLoading] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return readUserCache() === null;
+  });
   const userRef = useRef<User | null>(null);
 
   // Keep ref in sync so callbacks always see the latest user
   useEffect(() => { userRef.current = user; }, [user]);
+
+  const updateUser = useCallback((u: User | null) => {
+    writeUserCache(u);
+    setUser(u);
+  }, []);
 
   const loadUserWithProfile = useCallback(async (supabaseUser: SupabaseUser) => {
     console.log('[Auth] Loading user with profile:', supabaseUser.id);
@@ -166,13 +201,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const emailVerified = !!supabaseUser.email_confirmed_at || !!supabaseUser.confirmed_at;
       if (!emailVerified) {
         console.log('[Auth] Email not verified, not loading user');
-        setUser(null);
+        updateUser(null);
         setIsLoading(false);
         return;
       }
 
       let profile: Profile | null = null;
-      let profileTimedOut = false;
       try {
         const profilePromise = (async () => {
           let p = await fetchProfile(supabaseUser.id);
@@ -194,7 +228,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           new Promise<Profile | null>((resolve) => {
             setTimeout(() => {
               console.warn('[Auth] Profile loading timeout after 5s');
-              profileTimedOut = true;
               resolve(null);
             }, 5000);
           })
@@ -214,7 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const builtUser = buildUser(supabaseUser, profile);
-      setUser(builtUser);
+      updateUser(builtUser);
       setIsLoading(false);
     } catch (error) {
       console.error('[Auth] Error loading user with profile:', error);
@@ -235,10 +268,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         createdAt: supabaseUser.created_at,
         emailVerified: !!supabaseUser.email_confirmed_at || !!supabaseUser.confirmed_at,
       };
-      setUser(basicUser);
+      updateUser(basicUser);
       setIsLoading(false);
     }
-  }, []);
+  }, [updateUser]);
 
   const refreshUser = useCallback(async () => {
     console.log('[Auth] Refreshing user...');
@@ -248,111 +281,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await loadUserWithProfile(session.user);
       } else {
         console.log('[Auth] No session found');
-        setUser(null);
+        updateUser(null);
       }
     } catch (error) {
       console.error('[Auth] Failed to refresh user:', error);
-      setUser(null);
+      updateUser(null);
     }
-  }, [loadUserWithProfile]);
+  }, [loadUserWithProfile, updateUser]);
 
   // Initialize auth state and subscribe to changes
   useEffect(() => {
     console.log('[Auth] Initializing auth state...');
-    let timeoutId: NodeJS.Timeout | null = null;
-    let subscription: { unsubscribe: () => void } | null = null;
     let isMounted = true;
 
-    // Set a shorter timeout to prevent infinite loading
-    timeoutId = setTimeout(() => {
+    // Safety net: if INITIAL_SESSION never fires (e.g., corrupted local
+    // storage), unblock the loading state after 5s.
+    const safetyTimeout = setTimeout(() => {
       if (isMounted) {
-        console.warn('[Auth] Initialization timeout (3s) - setting loading to false');
+        console.warn('[Auth] Safety timeout hit - no INITIAL_SESSION within 5s');
         setIsLoading(false);
       }
-    }, 3000); // 3 second timeout
+    }, 5000);
 
-    // Get initial session with error handling
-    const initAuth = async () => {
-      try {
-        // Create a promise with timeout
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<{ data: { session: Session | null }, error: AuthError | null }>((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 2500)
-        );
-        
-        const result = await Promise.race([sessionPromise, timeoutPromise]) as { data: { session: Session | null }, error: AuthError | null };
-        
+    // onAuthStateChange fires INITIAL_SESSION synchronously from local
+    // storage - no network call, no race condition, no timeout needed.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
         if (!isMounted) return;
-        
-        if (result.error) {
-          console.error('[Auth] Error getting session:', result.error);
-          if (timeoutId) clearTimeout(timeoutId);
-          setIsLoading(false);
-          return;
-        }
-        
-        console.log('[Auth] Initial session:', result.data.session ? 'found' : 'none');
-        if (result.data.session?.user) {
-          await loadUserWithProfile(result.data.session.user);
-        }
-        if (timeoutId) clearTimeout(timeoutId);
-        setIsLoading(false);
-      } catch (error) {
-        if (!isMounted) return;
-        console.error('[Auth] Failed to initialize auth:', error);
-        if (timeoutId) clearTimeout(timeoutId);
-        setIsLoading(false);
-      }
-    };
+        clearTimeout(safetyTimeout);
+        console.log('[Auth] Auth state changed:', event, session?.user?.id ?? 'none');
 
-    initAuth();
-
-    // Subscribe to auth state changes
-    try {
-      const { data } = supabase.auth.onAuthStateChange(
-        async (event: AuthChangeEvent, session: Session | null): Promise<void> => {
-          if (!isMounted) return;
-          console.log('[Auth] Auth state changed:', event, session?.user?.id);
-          if (timeoutId) clearTimeout(timeoutId);
-
+        if (event === 'SIGNED_OUT' || !session?.user) {
+          // Double-check: only clear user if there's truly no session.
+          // Supabase can emit transient null sessions during token refresh.
           if (event === 'SIGNED_OUT') {
-            setUser(null);
+            updateUser(null);
             setIsLoading(false);
             return;
           }
-
-          if (session?.user) {
-            const current = userRef.current;
-            if (!current || current.id !== session.user.id) {
-              await loadUserWithProfile(session.user);
-            }
-          } else if (userRef.current) {
-            // Session is null but we have a user — verify before clearing
-            // (Supabase can emit transient null sessions during token refresh)
+          // For non-SIGNED_OUT null sessions (token refresh transient state),
+          // verify with the server before clearing.
+          if (userRef.current) {
             const { data: check } = await supabase.auth.getSession();
             if (!isMounted) return;
             if (!check.session) {
-              setUser(null);
+              updateUser(null);
             }
           }
           setIsLoading(false);
+          return;
         }
-      );
-      subscription = data.subscription;
-    } catch (error) {
-      console.error('[Auth] Failed to subscribe to auth changes:', error);
-      if (timeoutId) clearTimeout(timeoutId);
-      setIsLoading(false);
-    }
+
+        // Only reload the profile if the user identity actually changed.
+        const current = userRef.current;
+        if (event === 'INITIAL_SESSION' || !current || current.id !== session.user.id) {
+          await loadUserWithProfile(session.user);
+        } else {
+          setIsLoading(false);
+        }
+      }
+    );
 
     return () => {
       isMounted = false;
-      if (timeoutId) clearTimeout(timeoutId);
-      if (subscription) {
-        subscription.unsubscribe();
-      }
+      clearTimeout(safetyTimeout);
+      subscription.unsubscribe();
     };
-  }, [loadUserWithProfile]);
+  }, [loadUserWithProfile, updateUser]);
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     console.log('[Auth] Login attempt for:', email);
@@ -443,7 +438,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const emailVerified = !!authData.user.email_confirmed_at || !!authData.user.confirmed_at;
 
         if (emailVerified) {
-          setUser(buildUser(authData.user, profile));
+          updateUser(buildUser(authData.user, profile));
           return { success: true };
         } else {
           // Email not verified - return success but don't set user
@@ -466,7 +461,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('[Auth] Logout error:', error);
     } finally {
-      setUser(null);
+      updateUser(null);
     }
   };
 

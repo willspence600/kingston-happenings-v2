@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { Event, Venue, EventCategory } from '@/types/event';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
@@ -76,7 +76,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   const refreshEvents = useCallback(async () => {
     try {
-      const res = await fetch('/api/events');
+      const res = await fetch('/api/events?limit=250');
       const data = await safeJson(res);
       if (data.events) {
         // Transform API response to match Event type
@@ -120,7 +120,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   const refreshVenues = useCallback(async () => {
     try {
-      const res = await fetch('/api/venues');
+      const res = await fetch('/api/venues?limit=250');
       const data = await safeJson(res);
       if (data.venues) {
         setVenues(data.venues);
@@ -136,9 +136,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       const data = await safeJson(res);
       if (data.likes) {
         setUserLikes(data.likes);
-      }
-      if (data.likeCounts) {
-        setLikeCounts(data.likeCounts);
       }
     } catch (error) {
       console.error('Failed to fetch likes:', error);
@@ -170,18 +167,26 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   // Refresh data when the browser tab regains focus (replaces 30s polling to
   // avoid burning through Vercel's origin-transfer bandwidth while idle).
+  const lastFocusRefreshRef = useRef<number>(0);
+
   useEffect(() => {
     if (authLoading) return;
 
+    const REFRESH_COOLDOWN_MS = 60 * 1000;
+
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void Promise.all([
-          refreshEvents(),
-          refreshVenues(),
-          refreshLikes(),
-          isAdmin ? refreshPendingEvents() : Promise.resolve(),
-        ]);
-      }
+      if (document.visibilityState !== 'visible') return;
+
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < REFRESH_COOLDOWN_MS) return;
+      lastFocusRefreshRef.current = now;
+
+      void Promise.all([
+        refreshEvents(),
+        refreshVenues(),
+        refreshLikes(),
+        isAdmin ? refreshPendingEvents() : Promise.resolve(),
+      ]);
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);

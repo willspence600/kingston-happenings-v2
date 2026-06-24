@@ -8,6 +8,13 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const status = searchParams.get('status') || 'approved';
+    const DEFAULT_LIMIT = 250;
+    const MAX_LIMIT = 500;
+    const rawLimit = parseInt(searchParams.get('limit') || `${DEFAULT_LIMIT}`, 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), MAX_LIMIT) : DEFAULT_LIMIT;
+    const rawPage = parseInt(searchParams.get('page') || '1', 10);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const skip = (page - 1) * limit;
 
     // Only admins can see pending venues
     if (status === 'pending') {
@@ -27,6 +34,8 @@ export async function GET(request: NextRequest) {
         },
       },
       orderBy: { name: 'asc' },
+      take: limit,
+      skip,
     });
 
     const res = NextResponse.json({
@@ -59,6 +68,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const body = await request.json();
     const { name, address, neighborhood, website, imageUrl } = body;
 

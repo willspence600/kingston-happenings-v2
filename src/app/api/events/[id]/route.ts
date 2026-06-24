@@ -73,7 +73,7 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { categories, imageUrl, ...eventData } = body;
+    const { categories, imageUrl, venueId, newVenueName, newVenueAddress, ...eventData } = body;
 
     const isFoodDeal =
       (categories as string[] | undefined)?.includes('food-deal') ||
@@ -86,10 +86,39 @@ export async function PATCH(
       finalImageUrl = await uploadImage(imageUrl, id);
     }
 
+    let finalVenueId = venueId as string | undefined;
+    if (finalVenueId === 'new') {
+      if (!newVenueName || !newVenueAddress) {
+        return NextResponse.json(
+          { error: 'New venue name and address are required' },
+          { status: 400 }
+        );
+      }
+
+      const allVenues = await prisma.venue.findMany();
+      const existingVenue = allVenues.find(
+        (venue) => venue.name.toLowerCase() === String(newVenueName).toLowerCase()
+      );
+
+      if (existingVenue) {
+        finalVenueId = existingVenue.id;
+      } else {
+        const newVenue = await prisma.venue.create({
+          data: {
+            name: String(newVenueName),
+            address: String(newVenueAddress),
+            status: user.role === 'admin' ? 'approved' : 'pending',
+          },
+        });
+        finalVenueId = newVenue.id;
+      }
+    }
+
     const event = await prisma.event.update({
       where: { id },
       data: {
         ...eventData,
+        ...(finalVenueId ? { venueId: finalVenueId } : {}),
         ...(finalImageUrl !== undefined ? { imageUrl: finalImageUrl } : {}),
         ...(categories ? {
           categories: {

@@ -301,8 +301,8 @@ export default function SubmitEventPage() {
 
       // Validate recurrence end date is within 52 weeks
       if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
-        const startDate = new Date(form.date);
-        const endDate = new Date(form.recurrenceEndDate);
+        const startDate = parseISO(form.date);
+        const endDate = parseISO(form.recurrenceEndDate);
         const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
         if (weeksDiff > 52) {
           setError(`The recurrence period for "${form.title || 'untitled event'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
@@ -378,8 +378,8 @@ export default function SubmitEventPage() {
 
         // Validate recurrence end date is within 52 weeks
         if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
-          const startDate = new Date(form.date);
-          const endDate = new Date(form.recurrenceEndDate);
+          const startDate = parseISO(form.date);
+          const endDate = parseISO(form.recurrenceEndDate);
           const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
           if (weeksDiff > 52) {
             setError(`The recurrence period for "${form.title || 'untitled special'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
@@ -403,18 +403,18 @@ export default function SubmitEventPage() {
           if (form.isRecurring && form.recurrencePattern === 'days' && form.recurringDays.length > 0) {
             // For "days" pattern, create a separate event for each selected day
             for (const day of form.recurringDays) {
-              // Calculate the first occurrence date for this day
-              const startDate = new Date(form.date);
+              // Calculate the first occurrence date for this day (local-time safe)
+              const baseDate = parseISO(form.date);
               const dayIndex = dayNames.indexOf(day);
-              const currentDayIndex = startDate.getDay();
+              const currentDayIndex = baseDate.getDay();
               let daysToAdd = dayIndex - currentDayIndex;
               if (daysToAdd < 0) daysToAdd += 7;
-              startDate.setDate(startDate.getDate() + daysToAdd);
+              const occurrenceDate = addDays(baseDate, daysToAdd);
 
               await submitEvent({
                 title: form.title,
                 description: form.description,
-                date: startDate.toISOString().split('T')[0],
+                date: format(occurrenceDate, 'yyyy-MM-dd'),
                 startTime: form.startTime,
                 endTime: form.endTime || undefined,
                 venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
@@ -1487,7 +1487,7 @@ export default function SubmitEventPage() {
                     className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    Describe the special pricing (e.g., "$5 Pints", "50% Off", "Buy One Get One")
+                    Describe the special pricing (e.g., &quot;$5 Pints&quot;, &quot;50% Off&quot;, &quot;Buy One Get One&quot;)
                   </p>
                 </div>
               </section>
