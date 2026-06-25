@@ -4,6 +4,7 @@ import { Navigation, Footer } from "@/components";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { EventsProvider } from "@/contexts/EventsContext";
 import BandwidthInterceptor from "@/components/dev/BandwidthInterceptor";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "Kingston Happenings | Events in Kingston, Ontario",
@@ -29,6 +30,7 @@ export default function RootLayout({
             <Footer />
           </EventsProvider>
         </AuthProvider>
+        <Analytics />
       </body>
     </html>
   );
