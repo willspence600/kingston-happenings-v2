@@ -1,2 +1,0 @@
-- no differejnce between organizer and event goer
-- drake of kingston
