@@ -133,9 +133,11 @@ export async function GET(request: NextRequest) {
     });
 
     const res = NextResponse.json({ events: transformedEvents });
-    if (status !== 'pending' && status !== 'all') {
-      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
-    }
+    // Explicitly disable caching. A shared/public edge cache here previously caused
+    // newly created or updated events to not appear for minutes after submission,
+    // since Vercel's CDN served the same cached response to every client (including
+    // the submitter's own immediate refetch) until the cache entry expired.
+    res.headers.set('Cache-Control', 'no-store');
     return res;
   } catch (error) {
     console.error('Get events error:', error);
