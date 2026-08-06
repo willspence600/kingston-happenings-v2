@@ -20,8 +20,14 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search');
     const sort = searchParams.get('sort'); // date | venue
     // Pagination (optional). Defaults cap result size to protect the DB.
+    // NOTE: results are sorted oldest-first by date, so a cap that's too low relative
+    // to the total number of approved events (including past ones that are never
+    // deleted) will silently exclude the newest/future events from the response —
+    // they'd always sort past the cutoff. Keep this comfortably above the real
+    // approved-event count; see EventsContext.refreshEvents() which fetches the
+    // full list for the shared events feed used across the app.
     const DEFAULT_LIMIT = 250;
-    const MAX_LIMIT = 500;
+    const MAX_LIMIT = 1000;
     const rawLimit = parseInt(searchParams.get('limit') || `${DEFAULT_LIMIT}`, 10);
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), MAX_LIMIT) : DEFAULT_LIMIT;
     const rawPage = parseInt(searchParams.get('page') || '1', 10);
@@ -80,18 +86,24 @@ export async function GET(request: NextRequest) {
       ];
     }
 
+    // When sorting by date (the default), query newest-first so that if the result set
+    // ever exceeds `limit`, the rows dropped by `take` are the OLDEST ones — not the
+    // newest/future ones. We then reverse back to ascending order below so the response
+    // shape (soonest-first) matches what callers already expect.
     const orderBy =
       sort === 'venue'
         ? [{ venue: { name: 'asc' as const } }, { date: 'asc' as const }, { startTime: 'asc' as const }]
-        : [{ date: 'asc' as const }, { startTime: 'asc' as const }];
+        : [{ date: 'desc' as const }, { startTime: 'desc' as const }];
 
-    const events = await prisma.event.findMany({
+    const eventsQueried = await prisma.event.findMany({
       where,
       include: eventListInclude,
       orderBy,
       take: limit,
       skip,
     });
+
+    const events = sort === 'venue' ? eventsQueried : eventsQueried.reverse();
 
     // For pending events, fetch submitter information from Supabase profiles
     let submitterMap: Record<string, { name: string; role: 'user' | 'organizer' | 'admin' }> = {};

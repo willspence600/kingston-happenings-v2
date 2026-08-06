@@ -78,7 +78,12 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   const refreshEvents = useCallback(async () => {
     try {
-      const res = await fetch('/api/events?limit=250');
+      // Fetch the full approved-events list (not just a fixed page). This feeds the
+      // public browse page as well as the Admin "Published" and "Past Events" lists,
+      // all of which filter/sort this array client-side. Results are sorted oldest
+      // date first, so a limit lower than the total approved-event count would
+      // silently drop the newest/future events (they'd sort past the cutoff).
+      const res = await fetch('/api/events?limit=1000');
       const data = await safeJson(res);
       if (data.events) {
         // Transform API response to match Event type
