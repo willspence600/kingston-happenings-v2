@@ -9,7 +9,7 @@ export async function GET() {
 
     if (!user) {
       const res = NextResponse.json({ likes: [] });
-      res.headers.set('Cache-Control', 'no-store');
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
       return res;
     }
 
@@ -19,8 +19,6 @@ export async function GET() {
     });
 
     const res = NextResponse.json({ likes: likes.map((l) => l.eventId) });
-    // Private (per-browser) cache is safe here since it's keyed by the user's own
-    // session cookie, not shared across visitors like the public CDN cache was.
     res.headers.set('Cache-Control', 'private, max-age=30');
     return res;
   } catch (error) {

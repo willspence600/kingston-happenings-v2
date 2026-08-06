@@ -52,9 +52,9 @@ export async function GET(request: NextRequest) {
         eventCount: v._count.events,
       })),
     });
-    // Disable shared/edge caching — see src/app/api/events/route.ts for why a public
-    // CDN cache here caused newly created/updated venues to appear stale in production.
-    res.headers.set('Cache-Control', 'no-store');
+    if (status !== 'pending') {
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    }
     return res;
   } catch (error) {
     console.error('Get venues error:', error);
