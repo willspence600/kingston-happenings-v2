@@ -24,6 +24,8 @@ export interface EventSubmission {
   isRecurring?: boolean;
   recurrencePattern?: string;
   recurrenceEndDate?: string;
+  recurrenceDays?: number[];
+  isAllDay?: boolean;
 }
 
 /**
@@ -187,15 +189,40 @@ export async function cancelEvent(eventId: string): Promise<void> {
 
 /**
  * Delete an event
+ * @param scope - 'this' (single occurrence) or 'future' (this and all future)
  */
-export async function deleteEvent(eventId: string): Promise<void> {
-  const res = await fetch(`/api/events/${eventId}`, {
+export async function deleteEvent(
+  eventId: string,
+  scope: 'this' | 'future' = 'this'
+): Promise<void> {
+  const res = await fetch(`/api/events/${eventId}?scope=${scope}`, {
     method: 'DELETE',
   });
 
   if (!res.ok) {
     throw new Error('Failed to delete event');
   }
+}
+
+/**
+ * Extend a recurring series end date
+ */
+export async function extendSeries(
+  eventId: string,
+  newEndDate: string
+): Promise<{ created: number; deleted: number }> {
+  const res = await fetch(`/api/events/${eventId}/series`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newEndDate }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to extend series');
+  }
+
+  return res.json();
 }
 
 /**
@@ -211,10 +238,10 @@ export async function fetchMySubmissions(): Promise<Event[]> {
 }
 
 /**
- * Approve all recurring events by parent ID
+ * Approve all recurring events by series ID (or event id in the series)
  */
-export async function approveRecurringEvents(parentId: string): Promise<void> {
-  const res = await fetch(`/api/events/approve-recurring/${parentId}`, {
+export async function approveRecurringEvents(seriesId: string): Promise<void> {
+  const res = await fetch(`/api/events/approve-recurring/${seriesId}`, {
     method: 'POST',
   });
 
@@ -224,10 +251,10 @@ export async function approveRecurringEvents(parentId: string): Promise<void> {
 }
 
 /**
- * Reject all recurring events by parent ID
+ * Reject all recurring events by series ID (or event id in the series)
  */
-export async function rejectRecurringEvents(parentId: string): Promise<void> {
-  const res = await fetch(`/api/events/reject-recurring/${parentId}`, {
+export async function rejectRecurringEvents(seriesId: string): Promise<void> {
+  const res = await fetch(`/api/events/reject-recurring/${seriesId}`, {
     method: 'POST',
   });
 

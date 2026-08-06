@@ -10,6 +10,7 @@ import { EventCard, DatePicker } from '@/components';
 import { format, parseISO, startOfDay, isWithinInterval, isAfter, isEqual, isToday, isTomorrow, addDays } from 'date-fns';
 import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
 import SmartImage from '@/components/ui/SmartImage';
+import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
 
 interface SubmittedEvent {
   id: string;
@@ -27,9 +28,11 @@ interface SubmittedEvent {
   categories: string[];
   likeCount: number;
   isRecurring?: boolean;
+  seriesId?: string;
   recurrencePattern?: string;
+  recurrenceDays?: number[];
+  recurrenceDay?: number;
   recurrenceEndDate?: string;
-  parentEventId?: string;
 }
 
 interface EventGroup {
@@ -242,47 +245,37 @@ export default function MyEventsPage() {
 
   const groupedSubmissions = useMemo((): (SubmittedEvent | EventGroup)[] => {
     if (submittedEvents.length === 0) return [];
-    const parentMap = new Map<string, SubmittedEvent>();
-    const childMap = new Map<string, SubmittedEvent[]>();
+    const seriesMap = new Map<string, SubmittedEvent[]>();
     const standalone: SubmittedEvent[] = [];
 
     for (const ev of submittedEvents) {
-      if (ev.parentEventId) {
-        const list = childMap.get(ev.parentEventId) || [];
+      if (ev.seriesId) {
+        const list = seriesMap.get(ev.seriesId) || [];
         list.push(ev);
-        childMap.set(ev.parentEventId, list);
-      } else if (ev.isRecurring) {
-        parentMap.set(ev.id, ev);
+        seriesMap.set(ev.seriesId, list);
       } else {
         standalone.push(ev);
       }
     }
 
     const groups: (SubmittedEvent | EventGroup)[] = [];
-    for (const [parentId, parent] of parentMap) {
-      const instances = childMap.get(parentId) || [];
+    for (const [, instances] of seriesMap) {
       instances.sort((a, b) => a.date.localeCompare(b.date));
-      if (instances.length > 0) {
-        groups.push({ parentEvent: parent, instances });
+      if (instances.length > 1) {
+        groups.push({ parentEvent: instances[0], instances });
       } else {
-        groups.push(parent);
+        groups.push(instances[0]);
       }
-      childMap.delete(parentId);
-    }
-
-    // Orphan children whose parent wasn't in the current list
-    for (const [, children] of childMap) {
-      standalone.push(...children);
     }
 
     return [...groups, ...standalone];
   }, [submittedEvents]);
 
-  const toggleGroup = (parentId: string) => {
+  const toggleGroup = (seriesKey: string) => {
     setExpandedGroups(prev => {
       const next = new Set(prev);
-      if (next.has(parentId)) next.delete(parentId);
-      else next.add(parentId);
+      if (next.has(seriesKey)) next.delete(seriesKey);
+      else next.add(seriesKey);
       return next;
     });
   };
@@ -305,11 +298,22 @@ export default function MyEventsPage() {
     }
   };
 
-  const handleDeleteEvent = async (eventId: string) => {
-    if (!confirm('Are you sure you want to permanently delete this event? This cannot be undone.')) return;
-    setActionLoading(eventId);
+  const handleDeleteEvent = async (event: SubmittedEvent) => {
+    let scope: 'this' | 'future' = 'this';
+
+    if (event.seriesId) {
+      if (!confirm('Permanently delete this event occurrence? This cannot be undone.')) return;
+      const deleteFuture = confirm(
+        'Also delete this and all future occurrences in the series?\n\nOK = this & all future\nCancel = only this occurrence'
+      );
+      scope = deleteFuture ? 'future' : 'this';
+    } else {
+      if (!confirm('Are you sure you want to permanently delete this event? This cannot be undone.')) return;
+    }
+
+    setActionLoading(event.id);
     try {
-      const res = await fetch(`/api/events/${eventId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/events/${event.id}?scope=${scope}`, { method: 'DELETE' });
       if (res.ok) {
         await fetchSubmissions();
       } else {
@@ -946,12 +950,18 @@ export default function MyEventsPage() {
                     const isGroup = 'instances' in item;
                     if (isGroup) {
                       const group = item as EventGroup;
-                      const expanded = expandedGroups.has(group.parentEvent.id);
+                      const seriesKey = group.parentEvent.seriesId || group.parentEvent.id;
+                      const expanded = expandedGroups.has(seriesKey);
                       const upcoming = group.instances.filter(i => i.date >= format(new Date(), 'yyyy-MM-dd'));
+                      const recurrenceLabel = getRecurrenceLabel({
+                        recurrencePattern: group.parentEvent.recurrencePattern,
+                        recurrenceDays: group.parentEvent.recurrenceDays,
+                        recurrenceDay: group.parentEvent.recurrenceDay,
+                      });
                       return (
-                        <div key={group.parentEvent.id} className="bg-card border border-border rounded-xl overflow-hidden">
+                        <div key={seriesKey} className="bg-card border border-border rounded-xl overflow-hidden">
                           <button
-                            onClick={() => toggleGroup(group.parentEvent.id)}
+                            onClick={() => toggleGroup(seriesKey)}
                             className="w-full p-6 text-left hover:bg-muted/50 transition-colors"
                           >
                             <div className="flex items-center justify-between">
@@ -959,7 +969,7 @@ export default function MyEventsPage() {
                                 <div className="flex flex-wrap items-center gap-2 mb-1">
                                   {getStatusBadge(group.parentEvent.status)}
                                   <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                                    Recurring &middot; {group.parentEvent.recurrencePattern}
+                                    Recurring &middot; {recurrenceLabel}
                                   </span>
                                 </div>
                                 <h3 className="font-display text-lg text-foreground">
@@ -1041,7 +1051,7 @@ function SubmissionRow({
   getStatusBadge: (status: string) => React.ReactNode;
   actionLoading: string | null;
   onCancel: (id: string) => void;
-  onDelete: (id: string) => void;
+  onDelete: (event: SubmittedEvent) => void;
 }) {
   const loading = actionLoading === event.id;
   const isCancelled = event.status === 'cancelled';
@@ -1071,6 +1081,16 @@ function SubmissionRow({
                   {categoryLabels[cat as EventCategory]}
                 </span>
               ))}
+              {!isChild && event.seriesId && event.isRecurring && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                  Recurring &middot;{' '}
+                  {getRecurrenceLabel({
+                    recurrencePattern: event.recurrencePattern,
+                    recurrenceDays: event.recurrenceDays,
+                    recurrenceDay: event.recurrenceDay,
+                  })}
+                </span>
+              )}
             </div>
             <h3 className="font-display text-lg text-foreground mb-1">{event.title}</h3>
             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-2">
@@ -1115,7 +1135,7 @@ function SubmissionRow({
               </button>
             )}
             <button
-              onClick={() => onDelete(event.id)}
+              onClick={() => onDelete(event)}
               disabled={loading}
               className="flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm disabled:opacity-50"
             >

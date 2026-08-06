@@ -184,6 +184,28 @@ export default function SubmitEventPage() {
   const [eventForms, setEventForms] = useState<EventFormData[]>([createEmptyForm()]);
   const [specialForms, setSpecialForms] = useState<SpecialFormData[]>([createEmptySpecialForm()]);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  // Refs for scrolling to the section containing a field that failed validation.
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const registerFieldRef = (key: string) => (el: HTMLElement | null) => {
+    fieldRefs.current[key] = el;
+  };
+
+  // Scroll the offending field/section into view and focus the first control inside it,
+  // so it's immediately obvious why the form didn't submit.
+  const scrollToField = (key: string) => {
+    // Give React a tick to render any newly-expanded sections (e.g. recurrence options)
+    // before we try to measure/scroll to them.
+    requestAnimationFrame(() => {
+      const el = fieldRefs.current[key];
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const focusable = el.querySelector<HTMLElement>(
+        'input:not([type="hidden"]), select, textarea, button'
+      );
+      (focusable || el).focus?.({ preventScroll: true });
+    });
+  };
 
   const handleCategoryToggle = (formId: string, category: EventCategory) => {
     setEventForms(prev => prev.map(form => {
@@ -280,22 +302,26 @@ export default function SubmitEventPage() {
     for (const form of eventForms) {
       if (form.categories.length === 0) {
         setError(`Please select at least one category for "${form.title || 'untitled event'}"`);
+        scrollToField(`categories-${form.id}`);
         return;
       }
 
       if (!form.venueId) {
         setError(`Please select a venue or create a new one for "${form.title || 'untitled event'}"`);
+        scrollToField(`venue-${form.id}`);
         return;
       }
 
       if (form.venueId === 'new' && (!form.newVenueName || !form.newVenueAddress)) {
         setError(`Please provide both venue name and address for "${form.title || 'untitled event'}"`);
+        scrollToField(`venue-${form.id}`);
         return;
       }
 
       // Validate recurring weekly events require an end date
       if (form.isRecurring && form.recurrencePattern === 'weekly' && !form.recurrenceEndDate) {
         setError(`Please select an end date for the recurring weekly event "${form.title || 'untitled event'}". Maximum duration is 52 weeks.`);
+        scrollToField(`recurrenceEndDate-${form.id}`);
         return;
       }
 
@@ -306,6 +332,7 @@ export default function SubmitEventPage() {
         const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
         if (weeksDiff > 52) {
           setError(`The recurrence period for "${form.title || 'untitled event'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
+          scrollToField(`recurrenceEndDate-${form.id}`);
           return;
         }
       }
@@ -322,15 +349,16 @@ export default function SubmitEventPage() {
         if (form.priceType === 'free') {
           priceString = 'Free';
         } else if (form.priceType === 'amount' && form.priceAmount) {
-          priceString = `$${form.priceAmount}`;
+          // Save raw value — formatPrice prepends $ on display when numeric
+          priceString = form.priceAmount.trim();
         }
 
         await submitEvent({
           title: form.title,
           description: form.description,
           date: form.date,
-          startTime: form.startTime,
-          endTime: form.endTime || undefined,
+          startTime: form.isAllDay ? '00:00' : form.startTime,
+          endTime: form.isAllDay ? undefined : (form.endTime || undefined),
           venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
           newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
           newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
@@ -341,6 +369,7 @@ export default function SubmitEventPage() {
           isRecurring: form.isRecurring,
           recurrencePattern: form.isRecurring ? form.recurrencePattern : undefined,
           recurrenceEndDate: form.isRecurring ? form.recurrenceEndDate || undefined : undefined,
+          isAllDay: form.isAllDay,
         });
       }
 
@@ -349,6 +378,7 @@ export default function SubmitEventPage() {
     } catch (err) {
       console.error('[Submit] Error submitting events:', err);
       setError(err instanceof Error ? err.message : 'Failed to submit event(s). Please try again.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsSubmitting(false);
       }
@@ -357,22 +387,26 @@ export default function SubmitEventPage() {
       for (const form of specialForms) {
         if (form.categories.length === 0) {
           setError(`Please select at least one category (Food or Drink) for "${form.title || 'untitled special'}"`);
+          scrollToField(`special-categories-${form.id}`);
           return;
         }
 
         if (!form.venueId) {
           setError(`Please select a venue or create a new one for "${form.title || 'untitled special'}"`);
+          scrollToField(`special-venue-${form.id}`);
           return;
         }
 
         if (form.venueId === 'new' && (!form.newVenueName || !form.newVenueAddress)) {
           setError(`Please provide both venue name and address for "${form.title || 'untitled special'}"`);
+          scrollToField(`special-venue-${form.id}`);
           return;
         }
 
         // Validate recurring weekly specials require an end date
         if (form.isRecurring && form.recurrencePattern === 'weekly' && !form.recurrenceEndDate) {
           setError(`Please select an end date for the recurring weekly special "${form.title || 'untitled special'}". Maximum duration is 52 weeks.`);
+          scrollToField(`special-recurrenceEndDate-${form.id}`);
           return;
         }
 
@@ -383,6 +417,7 @@ export default function SubmitEventPage() {
           const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
           if (weeksDiff > 52) {
             setError(`The recurrence period for "${form.title || 'untitled special'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
+            scrollToField(`special-recurrenceEndDate-${form.id}`);
             return;
           }
         }
@@ -399,43 +434,36 @@ export default function SubmitEventPage() {
           if (form.categories.includes('food')) categories.push('food');
           if (form.categories.includes('drink')) categories.push('drink');
 
-          // Handle recurring specials
+          // Handle recurring specials — one series with multiple weekdays
           if (form.isRecurring && form.recurrencePattern === 'days' && form.recurringDays.length > 0) {
-            // For "days" pattern, create a separate event for each selected day
-            for (const day of form.recurringDays) {
-              // Calculate the first occurrence date for this day (local-time safe)
-              const baseDate = parseISO(form.date);
-              const dayIndex = dayNames.indexOf(day);
-              const currentDayIndex = baseDate.getDay();
-              let daysToAdd = dayIndex - currentDayIndex;
-              if (daysToAdd < 0) daysToAdd += 7;
-              const occurrenceDate = addDays(baseDate, daysToAdd);
+            const recurrenceDays = form.recurringDays.map((day) => dayNames.indexOf(day)).filter((d) => d >= 0);
 
-              await submitEvent({
-                title: form.title,
-                description: form.description,
-                date: format(occurrenceDate, 'yyyy-MM-dd'),
-                startTime: form.startTime,
-                endTime: form.endTime || undefined,
-                venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
-                newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
-                newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
-                categories,
-                price: form.price || undefined,
-                ticketUrl: undefined,
-                isRecurring: true,
-                recurrencePattern: 'weekly',
-                recurrenceEndDate: form.recurrenceEndDate || undefined,
-              });
-            }
+            await submitEvent({
+              title: form.title,
+              description: form.description,
+              date: form.date,
+              startTime: form.isAllDay ? '00:00' : form.startTime,
+              endTime: form.isAllDay ? undefined : (form.endTime || undefined),
+              venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
+              newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
+              newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
+              categories,
+              price: form.price || undefined,
+              ticketUrl: undefined,
+              isRecurring: true,
+              recurrencePattern: 'weekly',
+              recurrenceEndDate: form.recurrenceEndDate || undefined,
+              recurrenceDays,
+              isAllDay: form.isAllDay,
+            });
           } else {
             // For weekly or non-recurring specials
             await submitEvent({
               title: form.title,
               description: form.description,
               date: form.date,
-              startTime: form.startTime,
-              endTime: form.endTime || undefined,
+              startTime: form.isAllDay ? '00:00' : form.startTime,
+              endTime: form.isAllDay ? undefined : (form.endTime || undefined),
               venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
               newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
               newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
@@ -445,6 +473,7 @@ export default function SubmitEventPage() {
               isRecurring: form.isRecurring,
               recurrencePattern: form.isRecurring && form.recurrencePattern === 'weekly' ? 'weekly' : undefined,
               recurrenceEndDate: form.isRecurring ? (form.recurrenceEndDate || undefined) : undefined,
+              isAllDay: form.isAllDay,
             });
           }
         }
@@ -453,6 +482,7 @@ export default function SubmitEventPage() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (err) {
         setError('Failed to submit special(s). Please try again.');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       } finally {
         setIsSubmitting(false);
       }
@@ -884,7 +914,7 @@ export default function SubmitEventPage() {
                           )}
                         </div>
                         {formData.recurrencePattern !== 'custom' && (
-                          <div>
+                          <div ref={registerFieldRef(`recurrenceEndDate-${formData.id}`)}>
                             <label className="block text-sm font-medium text-foreground mb-2">
                               Until{formData.recurrencePattern === 'weekly' ? ' *' : ''}
                             </label>
@@ -960,7 +990,10 @@ export default function SubmitEventPage() {
               </section>
 
               {/* Location */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
+              <section
+                ref={registerFieldRef(`venue-${formData.id}`)}
+                className="bg-card border border-border rounded-xl p-6 mb-6"
+              >
                 <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
                   <MapPin size={20} className="text-primary" />
                   Location
@@ -980,7 +1013,10 @@ export default function SubmitEventPage() {
               </section>
 
               {/* Categories */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
+              <section
+                ref={registerFieldRef(`categories-${formData.id}`)}
+                className="bg-card border border-border rounded-xl p-6 mb-6"
+              >
                 <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
                   <Tag size={20} className="text-primary" />
                   Categories *
@@ -1058,17 +1094,14 @@ export default function SubmitEventPage() {
                       </label>
                     </div>
                     {formData.priceType === 'amount' && (
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                        <input
+                      <input
                           type="text"
                           id={`priceAmount-${formData.id}`}
                           value={formData.priceAmount}
                           onChange={(e) => updateForm(formData.id, { priceAmount: e.target.value })}
                           placeholder="e.g., 15, 20-40"
-                          className="w-full pl-8 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                         />
-                      </div>
                     )}
                   </div>
 
@@ -1344,7 +1377,7 @@ export default function SubmitEventPage() {
                       </div>
 
                       {formData.recurrencePattern === 'weekly' && (
-                        <div>
+                        <div ref={registerFieldRef(`special-recurrenceEndDate-${formData.id}`)}>
                           <label className="block text-sm font-medium text-foreground mb-2">
                             Until *
                           </label>
@@ -1417,7 +1450,10 @@ export default function SubmitEventPage() {
               </section>
 
               {/* Location */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
+              <section
+                ref={registerFieldRef(`special-venue-${formData.id}`)}
+                className="bg-card border border-border rounded-xl p-6 mb-6"
+              >
                 <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
                   <MapPin size={20} className="text-primary" />
                   Location
@@ -1437,7 +1473,10 @@ export default function SubmitEventPage() {
               </section>
 
               {/* Categories */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
+              <section
+                ref={registerFieldRef(`special-categories-${formData.id}`)}
+                className="bg-card border border-border rounded-xl p-6 mb-6"
+              >
                 <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
                   <Tag size={20} className="text-primary" />
                   Categories *
@@ -1483,11 +1522,11 @@ export default function SubmitEventPage() {
                     id={`special-price-${formData.id}`}
                     value={formData.price}
                     onChange={(e) => updateSpecialForm(formData.id, { price: e.target.value })}
-                    placeholder="e.g., $5 Pints, Half-Price Wings, $12 Burger & Pint"
+                    placeholder="e.g., 5 Pints, Half-Price Wings, 12 Burger & Pint"
                     className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    Describe the special pricing (e.g., &quot;$5 Pints&quot;, &quot;50% Off&quot;, &quot;Buy One Get One&quot;)
+                    Describe the special pricing (e.g., &quot;5 Pints&quot;, &quot;50% Off&quot;, &quot;Buy One Get One&quot;). Plain numbers get a $ when displayed.
                   </p>
                 </div>
               </section>

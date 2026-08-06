@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { Mail, Lock, User, Building2, Eye, EyeOff, UserPlus, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -129,9 +130,7 @@ export default function RegisterPage() {
         <div className="w-full max-w-md">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-display text-xl">K</span>
-            </div>
+            <Image src="/kh-logo.png" alt="Kingston Happenings" width={40} height={40} className="w-10 h-10" />
             <div>
               <span className="font-display text-xl text-foreground">Kingston</span>
               <span className="font-display text-xl text-primary ml-1">Happenings</span>

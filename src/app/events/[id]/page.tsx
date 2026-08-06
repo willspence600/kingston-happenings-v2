@@ -28,6 +28,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { categoryLabels, categoryColors } from '@/types/event';
 import { EventCard, Toast } from '@/components';
 import SmartImage from '@/components/ui/SmartImage';
+import { formatPrice } from '@/utils/price';
+import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
 
 export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -105,9 +107,23 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   const formattedDate = format(parseISO(event.date), 'EEEE, MMMM d, yyyy');
-  const formattedStartTime = format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
-  const formattedEndTime = event.endTime 
+  const isAllDay = event.isAllDay || event.startTime === '00:00';
+  const formattedStartTime = isAllDay
+    ? 'All Day'
+    : format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
+  const formattedEndTime = !isAllDay && event.endTime
     ? format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')
+    : null;
+  const isFoodDeal = event.categories.includes('food-deal');
+  const entityLabel = isFoodDeal ? 'Food & Drink Special' : 'Event';
+  const displayPrice = formatPrice(event.price);
+  const displayImage = event.imageUrl || event.venue?.coverImageUrl;
+  const recurrenceLabel = event.isRecurring
+    ? getRecurrenceLabel({
+        recurrencePattern: event.recurrencePattern,
+        recurrenceDays: event.recurrenceDays,
+        recurrenceDay: event.recurrenceDay,
+      })
     : null;
 
   const otherVenueEvents = getEventsByVenue(event.venue.id)
@@ -129,17 +145,17 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const isCancelled = event.status === 'cancelled';
 
   const handleCancelEvent = async () => {
-    if (!confirm('Are you sure you want to cancel this event?')) return;
+    if (!confirm(`Are you sure you want to cancel this ${entityLabel.toLowerCase()}?`)) return;
     setEventActionLoading(true);
     try {
       const res = await fetch(`/api/events/${event.id}/cancel`, { method: 'POST' });
       if (res.ok) {
-        setToastMessage('Event cancelled');
+        setToastMessage(`${entityLabel} cancelled`);
         setShowToast(true);
         window.location.reload();
       } else {
         const data = await res.json();
-        setToastMessage(data.error || 'Failed to cancel event');
+        setToastMessage(data.error || `Failed to cancel ${entityLabel.toLowerCase()}`);
         setShowToast(true);
       }
     } catch {
@@ -151,15 +167,27 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   const handleDeleteEvent = async () => {
-    if (!confirm('Are you sure you want to permanently delete this event? This cannot be undone.')) return;
+    let scope: 'this' | 'future' = 'this';
+    if (event.isRecurring && event.seriesId) {
+      const choice = window.confirm(
+        `This is a recurring ${entityLabel.toLowerCase()}.\n\nOK = delete this occurrence only\nCancel = abort\n\n(To delete this and all future occurrences, click OK then confirm the next prompt.)`
+      );
+      if (!choice) return;
+      const allFuture = window.confirm(
+        'Delete THIS AND ALL FUTURE occurrences?\n\nOK = this and all future\nCancel = just this occurrence'
+      );
+      scope = allFuture ? 'future' : 'this';
+    } else {
+      if (!confirm(`Are you sure you want to permanently delete this ${entityLabel.toLowerCase()}? This cannot be undone.`)) return;
+    }
     setEventActionLoading(true);
     try {
-      const res = await fetch(`/api/events/${event.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/events/${event.id}?scope=${scope}`, { method: 'DELETE' });
       if (res.ok) {
         router.push('/my-events');
       } else {
         const data = await res.json();
-        setToastMessage(data.error || 'Failed to delete event');
+        setToastMessage(data.error || `Failed to delete ${entityLabel.toLowerCase()}`);
         setShowToast(true);
       }
     } catch {
@@ -174,16 +202,23 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     <div className="min-h-screen">
       {/* Hero Image */}
       <div className="relative h-64 sm:h-80 lg:h-96 bg-muted">
-        {event.imageUrl && !event.categories.includes('food-deal') ? (
+        {displayImage && !isFoodDeal ? (
           <SmartImage
-            src={event.imageUrl}
+            src={displayImage}
+            alt={event.title}
+            sizes="100vw"
+            priority
+          />
+        ) : displayImage && isFoodDeal ? (
+          <SmartImage
+            src={displayImage}
             alt={event.title}
             sizes="100vw"
             priority
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
-            {event.categories.includes('food-deal') ? (
+            {isFoodDeal ? (
               <Utensils size={64} className="text-muted-foreground" />
             ) : (
               <Calendar size={64} className="text-muted-foreground" />
@@ -254,19 +289,19 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 {formattedStartTime}
                 {formattedEndTime && ` - ${formattedEndTime}`}
               </span>
-              {event.isRecurring && (
+              {event.isRecurring && recurrenceLabel && (
                 <span className="flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full text-primary">
                   <Repeat size={16} />
-                  {event.recurrencePattern === 'weekly' ? 'Every week' : 
-                   event.recurrencePattern === 'biweekly' ? 'Every 2 weeks' : 
-                   event.recurrencePattern === 'monthly' ? 'Every month' : 'Recurring'}
+                  {recurrenceLabel}
                 </span>
               )}
             </div>
 
             {/* Description */}
             <div className="prose prose-lg max-w-none mb-8">
-              <h2 className="font-display text-2xl text-foreground mb-4">About This Event</h2>
+              <h2 className="font-display text-2xl text-foreground mb-4">
+                {isFoodDeal ? 'About This Special' : 'About This Event'}
+              </h2>
               <p className="text-muted-foreground leading-relaxed">
                 {event.description}
               </p>
@@ -337,14 +372,14 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
               {/* Event Management Card (for submitter / admin) */}
               {canManageEvent && (
                 <div className="bg-card border border-border rounded-xl p-6">
-                  <h3 className="font-medium text-foreground mb-3">Manage Event</h3>
+                  <h3 className="font-medium text-foreground mb-3">Manage {entityLabel}</h3>
                   <div className="space-y-2">
                     {!isCancelled && event.status !== 'rejected' && (
                       <Link
                         href={`/events/${event.id}/edit`}
                         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
                       >
-                        <Edit size={16} /> Edit Event
+                        <Edit size={16} /> Edit {entityLabel}
                       </Link>
                     )}
                     {!isCancelled && event.status !== 'rejected' && (
@@ -353,7 +388,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                         disabled={eventActionLoading}
                         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-50 transition-colors disabled:opacity-50"
                       >
-                        {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />} Cancel Event
+                        {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />} Cancel {entityLabel}
                       </button>
                     )}
                     <button
@@ -361,7 +396,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                       disabled={eventActionLoading}
                       className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
                     >
-                      {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Delete Event
+                      {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Delete {entityLabel}
                     </button>
                   </div>
                 </div>
@@ -369,10 +404,10 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
               {/* Ticket/Price Card */}
               <div className="bg-card border border-border rounded-xl p-6">
-                {event.price && (
+                {displayPrice && (
                   <div className="flex items-center gap-2 mb-4">
                     <Ticket size={20} className="text-primary" />
-                    <span className="text-2xl font-display text-foreground">{event.price}</span>
+                    <span className="text-2xl font-display text-foreground">{displayPrice}</span>
                   </div>
                 )}
                 

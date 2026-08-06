@@ -48,6 +48,8 @@ interface EventSubmission {
   isRecurring?: boolean;
   recurrencePattern?: string;
   recurrenceEndDate?: string;
+  recurrenceDays?: number[];
+  isAllDay?: boolean;
 }
 
 const EventsContext = createContext<EventsContextType | undefined>(undefined);

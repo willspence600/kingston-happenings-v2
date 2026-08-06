@@ -1,12 +1,44 @@
 'use client';
 
-import { use } from 'react';
+import { use, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, MapPin, ExternalLink, Navigation, Calendar, Heart, Tag, Accessibility, UtensilsCrossed } from 'lucide-react';
+import { ArrowLeft, MapPin, ExternalLink, Navigation, Calendar, Heart, Tag, Repeat, Clock } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { EventCard } from '@/components';
+import SmartImage from '@/components/ui/SmartImage';
+import type { Event } from '@/types/event';
+import { formatPrice } from '@/utils/price';
+import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
+
+/** Collapse recurring occurrences into one representative item per series */
+function groupBySeries(events: Event[]): Event[] {
+  const seenSeries = new Set<string>();
+  const result: Event[] = [];
+
+  // Prefer soonest upcoming occurrence as the representative
+  const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+
+  for (const event of sorted) {
+    if (event.seriesId) {
+      if (seenSeries.has(event.seriesId)) continue;
+      seenSeries.add(event.seriesId);
+    }
+    result.push(event);
+  }
+  return result;
+}
+
+function formatEventTime(event: Event): string {
+  const isAllDay = event.isAllDay || event.startTime === '00:00';
+  if (isAllDay) return 'All Day';
+  const start = format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
+  if (event.endTime) {
+    return `${start} – ${format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')}`;
+  }
+  return start;
+}
 
 export default function VenueDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -14,6 +46,21 @@ export default function VenueDetailPage({ params }: { params: Promise<{ id: stri
   const { getVenueById, getEventsByVenue } = useEvents();
   
   const venue = getVenueById(id);
+  const venueEvents = venue ? getEventsByVenue(venue.id) : [];
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const upcomingEvents = venueEvents.filter((e) => e.date >= today);
+  const pastEvents = venueEvents.filter((e) => e.date < today);
+
+  const upcomingDeals = useMemo(
+    () => groupBySeries(upcomingEvents.filter(e => e.categories.includes('food-deal'))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [venueEvents, today]
+  );
+  const upcomingRegularEvents = useMemo(
+    () => groupBySeries(upcomingEvents.filter(e => !e.categories.includes('food-deal'))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [venueEvents, today]
+  );
 
   if (!venue) {
     return (
@@ -33,19 +80,23 @@ export default function VenueDetailPage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  const venueEvents = getEventsByVenue(venue.id);
-  const upcomingEvents = venueEvents.filter((e) => e.date >= format(new Date(), 'yyyy-MM-dd'));
-  const pastEvents = venueEvents.filter((e) => e.date < format(new Date(), 'yyyy-MM-dd'));
-  
-  // Separate deals from regular events
-  const upcomingDeals = upcomingEvents.filter(e => e.categories.includes('food-deal'));
-  const upcomingRegularEvents = upcomingEvents.filter(e => !e.categories.includes('food-deal'));
-
   return (
     <div className="min-h-screen">
       {/* Hero */}
-      <section className="relative bg-gradient-to-br from-secondary to-primary/80 text-white py-16 sm:py-24">
-        <div className="absolute inset-0 pattern-bg opacity-10" />
+      <section className="relative bg-gradient-to-br from-secondary to-primary/80 text-white py-16 sm:py-24 overflow-hidden">
+        {venue.coverImageUrl ? (
+          <>
+            <SmartImage
+              src={venue.coverImageUrl}
+              alt={venue.name}
+              sizes="100vw"
+              className="absolute inset-0 object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-secondary/80 to-primary/70" />
+          </>
+        ) : (
+          <div className="absolute inset-0 pattern-bg opacity-10" />
+        )}
         
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <button
@@ -57,8 +108,12 @@ export default function VenueDetailPage({ params }: { params: Promise<{ id: stri
           </button>
 
           <div className="flex items-start gap-4">
-            <div className="w-16 h-16 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
-              <MapPin size={32} />
+            <div className="w-16 h-16 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
+              {venue.imageUrl ? (
+                <SmartImage src={venue.imageUrl} alt={venue.name} sizes="64px" className="object-cover" />
+              ) : (
+                <MapPin size={32} />
+              )}
             </div>
             <div>
               <h1 className="font-display text-4xl sm:text-5xl mb-2">{venue.name}</h1>
@@ -138,7 +193,7 @@ export default function VenueDetailPage({ params }: { params: Promise<{ id: stri
               {upcomingRegularEvents.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {upcomingRegularEvents.map((event) => (
-                    <EventCard key={event.id} event={event} />
+                    <EventCard key={event.seriesId || event.id} event={event} />
                   ))}
                 </div>
               ) : (
@@ -163,38 +218,63 @@ export default function VenueDetailPage({ params }: { params: Promise<{ id: stri
 
               {upcomingDeals.length > 0 ? (
                 <div className="space-y-4">
-                  {upcomingDeals.map((event) => (
-                    <Link
-                      key={event.id}
-                      href={`/events/${event.id}`}
-                      className="block group bg-card border border-border rounded-xl p-4 hover:border-primary/50 transition-all hover:shadow-md"
-                    >
-                      <div className="flex gap-4">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-lg text-foreground group-hover:text-primary transition-colors line-clamp-1 mb-1">
-                            {event.title}
-                          </h3>
-                          {event.description && (
-                            <p className="text-muted-foreground text-sm line-clamp-2 mb-2">
-                              {event.description}
-                            </p>
-                          )}
-                          <div className="flex flex-wrap items-center gap-3">
-                            {event.price && (
-                              <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold text-sm">
-                                {event.price}
-                              </span>
+                  {upcomingDeals.map((event) => {
+                    const price = formatPrice(event.price);
+                    const timeLabel = formatEventTime(event);
+                    const recurrenceLabel = event.isRecurring
+                      ? getRecurrenceLabel({
+                          recurrencePattern: event.recurrencePattern,
+                          recurrenceDays: event.recurrenceDays,
+                          recurrenceDay: event.recurrenceDay,
+                        })
+                      : null;
+
+                    return (
+                      <Link
+                        key={event.seriesId || event.id}
+                        href={`/events/${event.id}`}
+                        className="block group bg-card border border-border rounded-xl p-4 hover:border-primary/50 transition-all hover:shadow-md"
+                      >
+                        <div className="flex gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-lg text-foreground group-hover:text-primary transition-colors line-clamp-1 mb-1">
+                              {event.title}
+                            </h3>
+                            {event.description && (
+                              <p className="text-muted-foreground text-sm line-clamp-2 mb-2">
+                                {event.description}
+                              </p>
                             )}
-                            <span className="text-muted-foreground text-sm flex items-center gap-1">
-                              <Calendar size={14} />
-                              {format(parseISO(event.date), 'MMM d')} • {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
-                              {event.endTime && ` - ${format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')}`}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-3">
+                              {price && (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold text-sm">
+                                  {price}
+                                </span>
+                              )}
+                              {recurrenceLabel ? (
+                                <span className="text-primary text-sm flex items-center gap-1">
+                                  <Repeat size={14} />
+                                  {recurrenceLabel}
+                                  <span className="text-muted-foreground">
+                                    · next {format(parseISO(event.date), 'MMM d')}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-sm flex items-center gap-1">
+                                  <Calendar size={14} />
+                                  {format(parseISO(event.date), 'MMM d')}
+                                </span>
+                              )}
+                              <span className="text-muted-foreground text-sm flex items-center gap-1">
+                                <Clock size={14} />
+                                {timeLabel}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </Link>
-                  ))}
+                      </Link>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-center py-12 bg-muted rounded-2xl">

@@ -41,6 +41,7 @@ export async function GET(
       venue: {
         ...venue,
         imageUrl: getAbsoluteImageUrl(venue.imageUrl),
+        coverImageUrl: getAbsoluteImageUrl(venue.coverImageUrl),
         events: venue.events.map((e) => ({
           ...e,
           imageUrl: getAbsoluteImageUrl(e.imageUrl),
@@ -71,7 +72,7 @@ export async function PUT(
 
     const { id } = await params;
     const body = await request.json();
-    const { name, address, neighborhood, website, imageUrl, promotionTier } = body;
+    const { name, address, neighborhood, website, imageUrl, coverImageUrl, promotionTier } = body;
 
     console.log('API received venue update request:', { id, name, address, promotionTier });
 
@@ -98,6 +99,7 @@ export async function PUT(
       neighborhood?: string | null;
       website?: string | null;
       imageUrl?: string | null;
+      coverImageUrl?: string | null;
       promotionTier: string;
     } = {
       name,
@@ -115,6 +117,9 @@ export async function PUT(
     }
     if (imageUrl !== undefined) {
       updateData.imageUrl = imageUrl === '' ? null : imageUrl;
+    }
+    if (coverImageUrl !== undefined) {
+      updateData.coverImageUrl = coverImageUrl === '' ? null : coverImageUrl;
     }
 
     console.log('Updating venue with data:', updateData);

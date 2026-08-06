@@ -13,6 +13,9 @@ interface ModalProps {
   confirmText?: string;
   cancelText?: string;
   onConfirm?: () => void;
+  /** Optional second confirm action (e.g. delete this vs all future) */
+  secondaryConfirmText?: string;
+  onSecondaryConfirm?: () => void;
 }
 
 export default function Modal({
@@ -24,11 +27,18 @@ export default function Modal({
   confirmText = 'OK',
   cancelText = 'Cancel',
   onConfirm,
+  secondaryConfirmText,
+  onSecondaryConfirm,
 }: ModalProps) {
   const handleConfirm = useCallback(() => {
     onConfirm?.();
     onClose();
   }, [onConfirm, onClose]);
+
+  const handleSecondaryConfirm = useCallback(() => {
+    onSecondaryConfirm?.();
+    onClose();
+  }, [onSecondaryConfirm, onClose]);
 
   // Close on escape key
   useEffect(() => {
@@ -108,22 +118,45 @@ export default function Modal({
               </div>
 
               {/* Actions */}
-              <div className="flex gap-3 p-6 pt-4 border-t border-border bg-muted/30">
+              <div className={`flex gap-3 p-6 pt-4 border-t border-border bg-muted/30 ${secondaryConfirmText ? 'flex-col sm:flex-row sm:flex-wrap' : ''}`}>
                 {type === 'confirm' || type === 'warning' ? (
-                  <>
-                    <button
-                      onClick={onClose}
-                      className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors"
-                    >
-                      {cancelText}
-                    </button>
-                    <button
-                      onClick={handleConfirm}
-                      className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${getConfirmButtonStyle()}`}
-                    >
-                      {confirmText}
-                    </button>
-                  </>
+                  secondaryConfirmText && onSecondaryConfirm ? (
+                    <>
+                      <button
+                        onClick={handleConfirm}
+                        className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors"
+                      >
+                        {confirmText}
+                      </button>
+                      <button
+                        onClick={handleSecondaryConfirm}
+                        className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${getConfirmButtonStyle()}`}
+                      >
+                        {secondaryConfirmText}
+                      </button>
+                      <button
+                        onClick={onClose}
+                        className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors sm:w-full"
+                      >
+                        {cancelText}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={onClose}
+                        className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors"
+                      >
+                        {cancelText}
+                      </button>
+                      <button
+                        onClick={handleConfirm}
+                        className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${getConfirmButtonStyle()}`}
+                      >
+                        {confirmText}
+                      </button>
+                    </>
+                  )
                 ) : (
                   <button
                     onClick={onClose}

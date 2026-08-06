@@ -1,8 +1,7 @@
 'use client';
 
-import { use, useState, useRef, useCallback, useEffect } from 'react';
+import { use, useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   Calendar,
   Clock,
@@ -18,12 +17,14 @@ import {
   Loader2,
   X,
   ArrowLeft,
+  Repeat,
 } from 'lucide-react';
 import { categoryLabels, EventCategory, browseCategories } from '@/types/event';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { DatePicker, VenueSelector } from '@/components';
 import { compressImage } from '@/utils/compression';
+import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
 
 const normalizeUrl = (url: string): string => {
   if (!url) return '';
@@ -34,18 +35,39 @@ const normalizeUrl = (url: string): string => {
 };
 
 type PriceType = 'na' | 'free' | 'amount';
+type EditScope = 'this' | 'future';
 
 const MAX_DESCRIPTION_LENGTH = 500;
 
 export default function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
   const { user, isAdmin, isLoading: authLoading } = useAuth();
   const { getEventById, venues, refreshEvents } = useEvents();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const registerFieldRef = (key: string) => (el: HTMLElement | null) => {
+    fieldRefs.current[key] = el;
+  };
+
+  // Scroll the offending field/section into view and focus the first control inside it,
+  // so it's immediately obvious why the form didn't submit.
+  const scrollToField = (key: string) => {
+    requestAnimationFrame(() => {
+      const el = fieldRefs.current[key];
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const focusable = el.querySelector<HTMLElement>(
+        'input:not([type="hidden"]), select, textarea, button'
+      );
+      (focusable || el).focus?.({ preventScroll: true });
+    });
+  };
 
   const event = getEventById(id);
   const isFoodDeal = event?.categories.includes('food-deal') ?? false;
+  const entityLabel = isFoodDeal ? 'Food & Drink Special' : 'Event';
+  const isRecurring = Boolean(event?.isRecurring && event?.seriesId);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -58,9 +80,14 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [categories, setCategories] = useState<EventCategory[]>([]);
   const [priceType, setPriceType] = useState<PriceType>('na');
   const [priceAmount, setPriceAmount] = useState('');
+  const [specialPrice, setSpecialPrice] = useState('');
   const [ticketUrl, setTicketUrl] = useState('');
   const [imagePreview, setImagePreview] = useState('');
   const [isAllDay, setIsAllDay] = useState(false);
+  const [editScope, setEditScope] = useState<EditScope>('this');
+  const [extendEndDate, setExtendEndDate] = useState('');
+  const [isExtending, setIsExtending] = useState(false);
+  const [extendMessage, setExtendMessage] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -78,23 +105,24 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       setCategories((event.categories || []) as EventCategory[]);
       setImagePreview(event.imageUrl || '');
       setTicketUrl(event.ticketUrl || '');
-      setIsAllDay(event.startTime === '00:00' && !event.endTime);
+      setIsAllDay(event.isAllDay ?? (event.startTime === '00:00' && !event.endTime));
+      setExtendEndDate(event.recurrenceEndDate || '');
 
-      if (event.price) {
+      if (isFoodDeal) {
+        setSpecialPrice(event.price || '');
+      } else if (event.price) {
         if (event.price === 'Free') {
           setPriceType('free');
-        } else if (event.price.startsWith('$')) {
-          setPriceType('amount');
-          setPriceAmount(event.price.replace('$', ''));
         } else {
           setPriceType('amount');
-          setPriceAmount(event.price);
+          // Strip leading $ if present for the input (display layer adds it back)
+          setPriceAmount(event.price.replace(/^\$/, ''));
         }
       }
 
       setInitialized(true);
     }
-  }, [event, initialized]);
+  }, [event, initialized, isFoodDeal]);
 
   const handleCategoryToggle = (category: EventCategory) => {
     setCategories(prev =>
@@ -107,25 +135,64 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     setImagePreview(compressed);
   };
 
+  const handleExtendSeries = async () => {
+    if (!extendEndDate) {
+      setError('Please select a new end date.');
+      return;
+    }
+    setIsExtending(true);
+    setError('');
+    setExtendMessage('');
+    try {
+      const res = await fetch(`/api/events/${id}/series`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newEndDate: extendEndDate }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to extend series');
+      setExtendMessage(
+        data.created > 0
+          ? `Extended series — created ${data.created} new occurrence(s).`
+          : data.deleted > 0
+            ? `Shortened series — removed ${data.deleted} occurrence(s).`
+            : 'Series end date updated.'
+      );
+      await refreshEvents();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to extend series.');
+    } finally {
+      setIsExtending(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (categories.length === 0) {
       setError('Please select at least one category.');
+      scrollToField('categories');
       return;
     }
     if (!venueId) {
       setError('Please select a venue.');
+      scrollToField('venue');
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      let priceString: string | undefined;
-      if (priceType === 'free') priceString = 'Free';
-      else if (priceType === 'amount' && priceAmount) priceString = `$${priceAmount}`;
+      let priceString: string | null = null;
+      if (isFoodDeal) {
+        priceString = specialPrice.trim() || null;
+      } else if (priceType === 'free') {
+        priceString = 'Free';
+      } else if (priceType === 'amount' && priceAmount) {
+        // Save raw value without forced $ — formatPrice handles display
+        priceString = priceAmount.trim();
+      }
 
       const body: Record<string, unknown> = {
         title,
@@ -133,15 +200,16 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         date,
         startTime: isAllDay ? '00:00' : startTime,
         endTime: isAllDay ? null : (endTime || null),
+        isAllDay,
         venueId,
         ...(venueId === 'new' ? { newVenueName, newVenueAddress } : {}),
         categories,
-        price: priceString || null,
+        price: priceString,
         ticketUrl: normalizeUrl(ticketUrl) || null,
         ...(isFoodDeal ? {} : { imageUrl: imagePreview || null }),
       };
 
-      const res = await fetch(`/api/events/${id}`, {
+      const res = await fetch(`/api/events/${id}?scope=${editScope}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -149,14 +217,15 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to update event');
+        throw new Error(data.error || `Failed to update ${entityLabel.toLowerCase()}`);
       }
 
       setIsSaved(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       await refreshEvents();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update event.');
+      setError(err instanceof Error ? err.message : `Failed to update ${entityLabel.toLowerCase()}.`);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsSubmitting(false);
     }
@@ -174,10 +243,10 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <h1 className="font-display text-3xl text-foreground mb-4">Event Not Found</h1>
-          <p className="text-muted-foreground mb-6">The event you&apos;re looking for doesn&apos;t exist.</p>
+          <h1 className="font-display text-3xl text-foreground mb-4">{entityLabel} Not Found</h1>
+          <p className="text-muted-foreground mb-6">The item you&apos;re looking for doesn&apos;t exist.</p>
           <Link href="/events" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg">
-            <ArrowLeft size={18} /> Back to Events
+            <ArrowLeft size={18} /> Back to Browse
           </Link>
         </div>
       </div>
@@ -191,9 +260,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <h1 className="font-display text-3xl text-foreground mb-4">Access Denied</h1>
-          <p className="text-muted-foreground mb-6">You don&apos;t have permission to edit this event.</p>
+          <p className="text-muted-foreground mb-6">You don&apos;t have permission to edit this {entityLabel.toLowerCase()}.</p>
           <Link href={`/events/${id}`} className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg">
-            <ArrowLeft size={18} /> Back to Event
+            <ArrowLeft size={18} /> Back
           </Link>
         </div>
       </div>
@@ -207,11 +276,15 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-6">
             <CheckCircle size={40} className="text-green-600" />
           </div>
-          <h1 className="font-display text-3xl text-foreground mb-4">Event Updated!</h1>
-          <p className="text-muted-foreground mb-8">Your changes have been saved successfully.</p>
+          <h1 className="font-display text-3xl text-foreground mb-4">{entityLabel} Updated!</h1>
+          <p className="text-muted-foreground mb-8">
+            {editScope === 'future'
+              ? 'Your changes have been applied to this and all future occurrences.'
+              : 'Your changes have been saved successfully.'}
+          </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link href={`/events/${id}`} className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium">
-              View Event
+              View {entityLabel}
             </Link>
             <button
               onClick={() => setIsSaved(false)}
@@ -225,22 +298,41 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     );
   }
 
+  const recurrenceLabel = isRecurring
+    ? getRecurrenceLabel({
+        recurrencePattern: event.recurrencePattern,
+        recurrenceDays: event.recurrenceDays,
+        recurrenceDay: event.recurrenceDay,
+      })
+    : '';
+
   return (
     <div className="min-h-screen">
       <section className="bg-gradient-to-br from-secondary to-primary/80 text-white py-12 sm:py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="font-display text-4xl sm:text-5xl mb-4">Edit Event</h1>
+              <h1 className="font-display text-4xl sm:text-5xl mb-4">Edit {entityLabel}</h1>
               <p className="text-white/80 text-lg max-w-2xl">
                 Update the details for &ldquo;{event.title}&rdquo;
               </p>
+              {isRecurring && (
+                <p className="mt-2 flex items-center gap-2 text-white/70 text-sm">
+                  <Repeat size={14} />
+                  {recurrenceLabel}
+                  {event.detachedFromSeries && (
+                    <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-500/30 text-amber-100 text-xs">
+                      Modified (detached from series)
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
             <Link
               href={`/events/${id}`}
               className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
             >
-              &larr; Back to Event
+              &larr; Back
             </Link>
           </div>
         </div>
@@ -253,17 +345,90 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             <p className="text-sm">{error}</p>
           </div>
         )}
+        {extendMessage && (
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-3 text-green-700">
+            <CheckCircle size={20} />
+            <p className="text-sm">{extendMessage}</p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Event Details */}
+          {/* Edit scope for recurring */}
+          {isRecurring && (
+            <section className="bg-card border border-border rounded-xl p-6">
+              <h3 className="font-display text-xl text-foreground mb-4 flex items-center gap-2">
+                <Repeat size={20} className="text-primary" />
+                Apply Changes To
+              </h3>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-muted/50">
+                  <input
+                    type="radio"
+                    name="editScope"
+                    value="this"
+                    checked={editScope === 'this'}
+                    onChange={() => setEditScope('this')}
+                    className="mt-1 w-4 h-4 text-primary focus:ring-primary"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-foreground">Just this occurrence</span>
+                    <p className="text-xs text-muted-foreground">Only this date will be updated. It will be marked as modified.</p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-muted/50">
+                  <input
+                    type="radio"
+                    name="editScope"
+                    value="future"
+                    checked={editScope === 'future'}
+                    onChange={() => setEditScope('future')}
+                    className="mt-1 w-4 h-4 text-primary focus:ring-primary"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-foreground">This and all future occurrences</span>
+                    <p className="text-xs text-muted-foreground">Updates this date and all later ones (skips previously modified occurrences).</p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="mt-6 pt-6 border-t border-border">
+                <h4 className="text-sm font-medium text-foreground mb-2">Extend recurrence end date</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Push out (or shorten) when this series ends. New occurrences will be generated automatically.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 items-end">
+                  <div className="flex-1">
+                    <DatePicker
+                      id="extendEndDate"
+                      value={extendEndDate}
+                      onChange={setExtendEndDate}
+                      placeholder="New end date"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExtendSeries}
+                    disabled={isExtending || !extendEndDate}
+                    className="px-4 py-3 bg-secondary text-secondary-foreground rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                  >
+                    {isExtending ? 'Updating…' : 'Update End Date'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Details */}
           <section className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
               <FileText size={20} className="text-primary" />
-              Event Details
+              {entityLabel} Details
             </h3>
             <div className="space-y-4">
               <div>
-                <label htmlFor="title" className="block text-sm font-medium text-foreground mb-2">Event Title *</label>
+                <label htmlFor="title" className="block text-sm font-medium text-foreground mb-2">
+                  {isFoodDeal ? 'Special Title' : 'Event Title'} *
+                </label>
                 <input
                   type="text"
                   id="title"
@@ -310,7 +475,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   }}
                   className="w-4 h-4 text-primary rounded focus:ring-primary"
                 />
-                <span className="text-sm font-medium text-foreground">This is an all-day event</span>
+                <span className="text-sm font-medium text-foreground">
+                  This is an all-day {isFoodDeal ? 'special' : 'event'}
+                </span>
               </label>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -353,7 +520,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           </section>
 
           {/* Location */}
-          <section className="bg-card border border-border rounded-xl p-6">
+          <section ref={registerFieldRef('venue')} className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
               <MapPin size={20} className="text-primary" />
               Location
@@ -371,131 +538,148 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             />
           </section>
 
-          {/* Categories */}
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
-              <Tag size={20} className="text-primary" />
-              Categories *
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">Select all that apply</p>
-            <div className="flex flex-wrap gap-2">
-              {browseCategories.map((category) => {
-                const isSelected = categories.includes(category);
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    onClick={() => handleCategoryToggle(category)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-border'
-                    }`}
-                  >
-                    {categoryLabels[category]}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+          {/* Categories — events only show browse categories; specials keep food/drink */}
+          {!isFoodDeal && (
+            <section ref={registerFieldRef('categories')} className="bg-card border border-border rounded-xl p-6">
+              <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
+                <Tag size={20} className="text-primary" />
+                Categories *
+              </h3>
+              <p className="text-sm text-muted-foreground mb-4">Select all that apply</p>
+              <div className="flex flex-wrap gap-2">
+                {browseCategories.map((category) => {
+                  const isSelected = categories.includes(category);
+                  return (
+                    <button
+                      key={category}
+                      type="button"
+                      onClick={() => handleCategoryToggle(category)}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-border'
+                      }`}
+                    >
+                      {categoryLabels[category]}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
-          {/* Additional Info */}
+          {/* Price / Additional Info */}
           <section className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
               <DollarSign size={20} className="text-primary" />
-              Additional Information
+              {isFoodDeal ? 'Price' : 'Additional Information'}
             </h3>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-3">Price / Admission</label>
-                <div className="flex flex-wrap gap-3 mb-3">
-                  {(['na', 'free', 'amount'] as const).map((type) => (
-                    <label key={type} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="priceType"
-                        value={type}
-                        checked={priceType === type}
-                        onChange={() => { setPriceType(type); if (type !== 'amount') setPriceAmount(''); }}
-                        className="w-4 h-4 text-primary focus:ring-primary"
-                      />
-                      <span className="text-sm text-foreground">{type === 'na' ? 'N/A' : type === 'free' ? 'Free' : 'Paid'}</span>
-                    </label>
-                  ))}
-                </div>
-                {priceType === 'amount' && (
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                    <input
-                      type="text"
-                      value={priceAmount}
-                      onChange={(e) => setPriceAmount(e.target.value)}
-                      placeholder="e.g., 15, 20-40"
-                      className="w-full pl-8 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label htmlFor="ticketUrl" className="block text-sm font-medium text-foreground mb-2">Ticket / Registration Link</label>
-                <div className="relative">
-                  <LinkIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              {isFoodDeal ? (
+                <div>
+                  <label htmlFor="specialPrice" className="block text-sm font-medium text-foreground mb-2">
+                    Special Price
+                  </label>
                   <input
                     type="text"
-                    id="ticketUrl"
-                    value={ticketUrl}
-                    onChange={(e) => setTicketUrl(e.target.value)}
-                    placeholder="e.g., ticketmaster.com/event/abc"
-                    className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                    id="specialPrice"
+                    value={specialPrice}
+                    onChange={(e) => setSpecialPrice(e.target.value)}
+                    placeholder="e.g., 5 Pints, Half-Price Wings, Free"
+                    className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Enter a number (e.g. 15) or free text (e.g. Free, Varies). Numbers get a $ when displayed.
+                  </p>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-3">Price / Admission</label>
+                    <div className="flex flex-wrap gap-3 mb-3">
+                      {(['na', 'free', 'amount'] as const).map((type) => (
+                        <label key={type} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="priceType"
+                            value={type}
+                            checked={priceType === type}
+                            onChange={() => { setPriceType(type); if (type !== 'amount') setPriceAmount(''); }}
+                            className="w-4 h-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-foreground">{type === 'na' ? 'N/A' : type === 'free' ? 'Free' : 'Paid'}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {priceType === 'amount' && (
+                      <input
+                        type="text"
+                        value={priceAmount}
+                        onChange={(e) => setPriceAmount(e.target.value)}
+                        placeholder="e.g., 15, 20-40"
+                        className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      />
+                    )}
+                  </div>
 
-              {!isFoodDeal && (
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">Event Image</label>
-                  {imagePreview ? (
-                    <div className="relative rounded-xl overflow-hidden">
-                      <img src={imagePreview} alt="Event preview" className="w-full h-48 object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setImagePreview('');
-                          if (fileInputRef.current) fileInputRef.current.value = '';
+                  <div>
+                    <label htmlFor="ticketUrl" className="block text-sm font-medium text-foreground mb-2">Ticket / Registration Link</label>
+                    <div className="relative">
+                      <LinkIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <input
+                        type="text"
+                        id="ticketUrl"
+                        value={ticketUrl}
+                        onChange={(e) => setTicketUrl(e.target.value)}
+                        placeholder="e.g., ticketmaster.com/event/abc"
+                        className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">Event Image</label>
+                    {imagePreview ? (
+                      <div className="relative rounded-xl overflow-hidden">
+                        <img src={imagePreview} alt="Event preview" className="w-full h-48 object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImagePreview('');
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                          className="absolute top-2 right-2 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const file = e.dataTransfer.files[0];
+                          if (file?.type.startsWith('image/')) handleImageSelect(file);
                         }}
-                        className="absolute top-2 right-2 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
                       >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const file = e.dataTransfer.files[0];
-                        if (file?.type.startsWith('image/')) handleImageSelect(file);
-                      }}
-                      onClick={() => fileInputRef.current?.click()}
-                      className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
-                    >
-                      <Upload size={32} className="mx-auto text-muted-foreground mb-3" />
-                      <p className="text-sm text-foreground font-medium mb-1">Drop an image here or click to upload</p>
-                      <p className="text-xs text-muted-foreground">PNG, JPG, GIF up to 5MB</p>
-                    </div>
-                  )}
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                </div>
+                        <Upload size={32} className="mx-auto text-muted-foreground mb-3" />
+                        <p className="text-sm text-foreground font-medium mb-1">Drop an image here or click to upload</p>
+                        <p className="text-xs text-muted-foreground">PNG, JPG, GIF up to 5MB</p>
+                      </div>
+                    )}
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                  </div>
+                </>
               )}
             </div>
           </section>
 
-          {/* Submit */}
           <button
             type="submit"
             disabled={isSubmitting}
