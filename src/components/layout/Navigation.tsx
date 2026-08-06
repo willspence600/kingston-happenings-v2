@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useMemo } from 'react';
 import { Menu, X, Calendar, Home, MapPin, Plus, Search, Info, User, LogOut, Shield, Heart } from 'lucide-react';
@@ -26,7 +27,17 @@ export default function Navigation() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   
   const pendingCount = useMemo(() => {
-    return pendingEvents.filter(event => !event.parentEventId).length;
+    // Count unique series (or standalone events) — one badge per series, not per occurrence
+    const seen = new Set<string>();
+    let count = 0;
+    for (const event of pendingEvents) {
+      const key = event.seriesId || event.id;
+      if (!seen.has(key)) {
+        seen.add(key);
+        count++;
+      }
+    }
+    return count;
   }, [pendingEvents]);
 
   const handleLogout = () => {
@@ -41,9 +52,14 @@ export default function Navigation() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center transform group-hover:rotate-3 transition-transform">
-              <span className="text-primary-foreground font-display text-xl">K</span>
-            </div>
+            <Image
+              src="/kh-logo.png"
+              alt="Kingston Happenings"
+              width={40}
+              height={40}
+              className="w-10 h-10 transform group-hover:rotate-3 transition-transform"
+              priority
+            />
             <div className="hidden sm:block">
               <span className="font-display text-xl text-foreground">Kingston</span>
               <span className="font-display text-xl text-primary ml-1">Happenings</span>

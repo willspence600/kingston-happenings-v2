@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
-import { getAbsoluteImageUrl } from '@/utils/url';
+import { transformEvent, eventListInclude } from '@/utils/eventTransform';
 
 // GET /api/events/my-submissions - Get events submitted by the current user
 export async function GET() {
@@ -13,38 +13,11 @@ export async function GET() {
 
     const events = await prisma.event.findMany({
       where: { submittedById: user.id },
-      include: {
-        venue: true,
-        categories: true,
-        _count: {
-          select: { likes: true },
-        },
-      },
+      include: eventListInclude,
       orderBy: { createdAt: 'desc' },
     });
 
-    const transformedEvents = events.map((event) => ({
-      id: event.id,
-      title: event.title,
-      description: event.description,
-      date: event.date,
-      startTime: event.startTime,
-      endTime: event.endTime,
-      price: event.price,
-      ticketUrl: event.ticketUrl,
-      imageUrl: getAbsoluteImageUrl(event.imageUrl && event.imageUrl.startsWith('data:') ? null : event.imageUrl),
-      featured: event.featured,
-      status: event.status,
-      submittedById: event.submittedById,
-      createdAt: event.createdAt,
-      venue: { ...event.venue, imageUrl: getAbsoluteImageUrl(event.venue.imageUrl) },
-      categories: event.categories.map((c) => c.name),
-      likeCount: event._count.likes,
-      isRecurring: event.isRecurring,
-      recurrencePattern: event.recurrencePattern,
-      recurrenceEndDate: event.recurrenceEndDate,
-      parentEventId: event.parentEventId,
-    }));
+    const transformedEvents = events.map((event) => transformEvent(event, { stripDataUrls: true }));
 
     return NextResponse.json({ events: transformedEvents });
   } catch (error) {
@@ -55,4 +28,3 @@ export async function GET() {
     );
   }
 }
-

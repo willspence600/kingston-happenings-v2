@@ -10,6 +10,7 @@ import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { EventCategory, categoryLabels, categoryColors, categoryColorsMuted, categoryColorsActive, browseCategories } from '@/types/event';
+import { formatPrice } from '@/utils/price';
 type TabType = 'all' | 'events' | 'deals';
 type PastEventsRange = 'none' | 'week' | 'month' | '3months' | '6months';
 
@@ -83,7 +84,7 @@ function EventsContent() {
   const initialCategory = searchParams.get('category') as EventCategory | null;
   const initialDate = searchParams.get('date');
   const tabParam = searchParams.get('tab');
-  const initialTab: TabType = tabParam === 'deals' ? 'deals' : tabParam === 'all' ? 'all' : 'events';
+  const initialTab: TabType = tabParam === 'deals' ? 'deals' : tabParam === 'events' ? 'events' : 'all';
 
   const { events: allEventsFromContext, getUpcomingEvents, isLiked, toggleLike, getLikeCount, isLoading } = useEvents();
   const { user } = useAuth();
@@ -851,7 +852,14 @@ function EventsContent() {
                                         </p>
                                         {deal.price && (
                                           <p className="text-primary font-medium text-sm mt-1">
-                                            {deal.price}
+                                            {formatPrice(deal.price)}
+                                          </p>
+                                        )}
+                                        {!(deal.isAllDay || deal.startTime === '00:00') && (
+                                          <p className="text-muted-foreground text-xs mt-0.5 flex items-center gap-1">
+                                            <Clock size={12} />
+                                            {format(parseISO(`2000-01-01T${deal.startTime}`), 'h:mm a')}
+                                            {deal.endTime ? ` – ${format(parseISO(`2000-01-01T${deal.endTime}`), 'h:mm a')}` : ''}
                                           </p>
                                         )}
                                       </div>
@@ -1344,7 +1352,7 @@ function EventsContent() {
                                           <div className="flex items-center gap-2 opacity-100 group-hover:opacity-0 group-hover:hidden transition-opacity duration-200">
                                             {deal.price && (
                                               <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold text-sm">
-                                                {deal.price}
+                                                {formatPrice(deal.price)}
                                               </span>
                                             )}
                                             <span className="text-muted-foreground text-sm flex items-center gap-1.5">

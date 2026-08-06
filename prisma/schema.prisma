@@ -22,6 +22,7 @@ model Venue {
   neighborhood  String?
   website       String?
   imageUrl      String?
+  coverImageUrl String?
   status        String   @default("approved") // pending, approved, rejected
   promotionTier String   @default("standard") // standard, promoted, featured
   createdAt     DateTime @default(now())
@@ -29,6 +30,40 @@ model Venue {
 
   // Relations
   events Event[]
+  series EventSeries[]
+}
+
+model EventSeries {
+  id                String   @id @default(cuid())
+  title             String
+  description       String
+  startTime         String
+  endTime           String?
+  price             String?
+  ticketUrl         String?
+  imageUrl          String?
+  isAllDay          Boolean  @default(false)
+  status            String   @default("pending") // pending, approved, rejected
+  recurrencePattern String // weekly, biweekly, monthly
+  recurrenceDays    Int[] // 0-6, supports multiple weekdays (e.g. [1,3] = Mon & Wed)
+  seriesStartDate   String // YYYY-MM-DD, first occurrence
+  seriesEndDate     String? // YYYY-MM-DD, null = open-ended
+  venueId           String
+  venue             Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  submittedById     String?
+  categories        EventSeriesCategory[]
+  occurrences       Event[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model EventSeriesCategory {
+  id       String      @id @default(cuid())
+  name     String
+  series   EventSeries @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  seriesId String
+
+  @@unique([seriesId, name])
 }
 
 model Event {
@@ -44,13 +79,12 @@ model Event {
   featured    Boolean @default(false)
   status      String  @default("pending") // pending, approved, rejected, cancelled
   sortOrder   Int? // For admin-controlled sorting (especially for food & drink specials)
+  isAllDay    Boolean @default(false)
 
-  // Recurrence fields
-  isRecurring       Boolean @default(false)
-  recurrencePattern String? // weekly, biweekly, monthly
-  recurrenceDay     Int? // 0-6 for day of week (0=Sunday)
-  recurrenceEndDate String? // YYYY-MM-DD format
-  parentEventId     String? // Links recurring instances to parent
+  // Series linkage (recurring events)
+  seriesId            String?
+  series              EventSeries? @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  detachedFromSeries  Boolean      @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

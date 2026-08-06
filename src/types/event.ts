@@ -50,6 +50,7 @@ export interface Venue {
   neighborhood?: string;
   website?: string;
   imageUrl?: string;
+  coverImageUrl?: string;
   promotionTier?: string;
 }
 
@@ -69,11 +70,15 @@ export interface Event {
   price?: string;
   ticketUrl?: string;
   featured?: boolean;
-  // Recurrence fields
+  // Recurrence fields (series-derived)
   isRecurring?: boolean;
+  seriesId?: string;
+  detachedFromSeries?: boolean;
   recurrencePattern?: RecurrencePattern;
-  recurrenceDay?: number; // 0-6 for day of week
+  recurrenceDays?: number[]; // 0-6 for days of week
+  recurrenceDay?: number; // 0-6 legacy single-day
   recurrenceEndDate?: string;
+  /** @deprecated Use seriesId instead */
   parentEventId?: string;
   // Event type flags
   isDeal?: boolean;

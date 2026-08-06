@@ -9,6 +9,8 @@ import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import SmartImage from '@/components/ui/SmartImage';
+import { formatPrice } from '@/utils/price';
+import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
 
 interface EventCardProps {
   event: Event;
@@ -22,10 +24,22 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
   const router = useRouter();
   
   const formattedDate = format(parseISO(event.date), 'EEE, MMM d');
-  const formattedTime = event.isAllDay ? 'All Day' : format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
+  const isAllDay = event.isAllDay || event.startTime === '00:00';
+  const formattedTime = isAllDay
+    ? 'All Day'
+    : format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
   const liked = isLiked(event.id);
   const likeCount = getLikeCount(event.id);
   const isCancelled = event.status === 'cancelled';
+  const displayPrice = formatPrice(event.price);
+  const displayImage = event.imageUrl || event.venue?.coverImageUrl;
+  const recurrenceLabel = event.isRecurring
+    ? getRecurrenceLabel({
+        recurrencePattern: event.recurrencePattern,
+        recurrenceDays: event.recurrenceDays,
+        recurrenceDay: event.recurrenceDay,
+      })
+    : '';
 
   const handleLikeClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -91,9 +105,9 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
               {event.venue.name} · {formattedTime}
             </p>
           </div>
-          {event.price && (
+          {displayPrice && (
             <span className="relative z-10 flex-shrink-0 text-sm font-medium text-primary pointer-events-none">
-              {event.price}
+              {displayPrice}
             </span>
           )}
           <div className="absolute right-3 top-1/2 -translate-y-1/2 z-20">
@@ -114,9 +128,9 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
             className="absolute inset-0 z-0"
           />
           <div className="relative z-10 h-48 sm:h-56 bg-muted pointer-events-none">
-            {event.imageUrl ? (
+            {displayImage ? (
               <SmartImage
-                src={event.imageUrl}
+                src={displayImage}
                 alt={event.title}
                 sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 400px"
                 className="group-hover:scale-105 transition-transform duration-500"
@@ -171,17 +185,15 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
               {event.isRecurring && (
                 <span className="flex items-center gap-1 text-primary" title="Recurring event">
                   <Repeat size={14} />
-                  {event.recurrencePattern === 'weekly' ? 'Weekly' : 
-                   event.recurrencePattern === 'biweekly' ? 'Biweekly' : 
-                   event.recurrencePattern === 'monthly' ? 'Monthly' : 'Recurring'}
+                  {recurrenceLabel}
                 </span>
               )}
             </div>
-            {event.price && (
+            {displayPrice && (
               <div className="mt-4 flex items-center justify-between">
                 <span className="flex items-center gap-1 text-primary font-medium">
                   <Ticket size={16} />
-                  {event.price}
+                  {displayPrice}
                 </span>
               </div>
             )}
@@ -201,9 +213,9 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
           className="absolute inset-0 z-0"
         />
         <div className="relative z-10 h-40 bg-muted pointer-events-none">
-          {event.imageUrl ? (
+          {displayImage ? (
             <SmartImage
-              src={event.imageUrl}
+              src={displayImage}
               alt={event.title}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 400px"
               className={`group-hover:scale-105 transition-transform duration-500 ${isCancelled ? 'grayscale' : ''}`}
@@ -263,9 +275,7 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
             {event.isRecurring && (
               <span className="flex items-center gap-1 text-primary" title="Recurring event">
                 <Repeat size={12} />
-                {event.recurrencePattern === 'weekly' ? 'Weekly' : 
-                 event.recurrencePattern === 'biweekly' ? 'Biweekly' : 
-                 event.recurrencePattern === 'monthly' ? 'Monthly' : 'Recurring'}
+                {recurrenceLabel}
               </span>
             )}
           </div>
@@ -273,9 +283,9 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
             <MapPin size={12} />
             {event.venue.name}
           </p>
-          {event.price && (
+          {displayPrice && (
             <p className="mt-2 text-sm font-medium text-primary">
-              {event.price}
+              {displayPrice}
             </p>
           )}
         </div>
@@ -283,4 +293,3 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
     </div>
   );
 }
-

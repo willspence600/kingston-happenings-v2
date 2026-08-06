@@ -46,6 +46,7 @@ export async function GET(request: NextRequest) {
         neighborhood: v.neighborhood,
         website: v.website,
         imageUrl: getAbsoluteImageUrl(v.imageUrl),
+        coverImageUrl: getAbsoluteImageUrl(v.coverImageUrl),
         status: v.status,
         promotionTier: v.promotionTier || 'standard',
         eventCount: v._count.events,
