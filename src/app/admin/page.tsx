@@ -272,6 +272,10 @@ function AdminDashboard() {
             onUpdateVenue={onUpdateVenue}
             onDeleteVenue={onDeleteVenue}
             onRejectVenue={onRejectVenue}
+            onVenueCreated={async () => {
+              await loadVenues();
+              refreshVenues();
+            }}
           />
         )}
         {tab === 'promotions' && (

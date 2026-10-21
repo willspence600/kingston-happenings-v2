@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { addDays, format } from 'date-fns';
-import { ChevronDown, Edit, Loader2, MapPin, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, Edit, Loader2, MapPin, Plus, Search, Trash2, X } from 'lucide-react';
 import type { Event } from '@/types/event';
 import { isDowntown } from '@/components/brand';
 import { venueTier, type PromotionTier } from '@/lib/promotion';
@@ -35,6 +35,7 @@ export default function VenuesTab({
   onUpdateVenue,
   onDeleteVenue,
   onRejectVenue,
+  onVenueCreated,
 }: {
   venues: AdminVenue[];
   listings: Event[];
@@ -42,13 +43,15 @@ export default function VenuesTab({
   onUpdateVenue: (venue: AdminVenue, update: VenueUpdate, success?: string) => Promise<boolean>;
   onDeleteVenue: (venue: AdminVenue) => Promise<void>;
   onRejectVenue: (venue: AdminVenue) => Promise<void>;
+  onVenueCreated: () => Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<SortMode>('az');
   const [showSort, setShowSort] = useState(false);
   const [tierVenue, setTierVenue] = useState<AdminVenue | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const pending = venues.filter((v) => v.status === 'pending');
@@ -106,9 +109,19 @@ export default function VenuesTab({
   const sortLabels: Record<SortMode, string> = { az: 'Sort: A–Z', za: 'Sort: Z–A', busiest: 'Sort: Busiest', tier: 'Sort: Promotion' };
 
   const toggleMajor = async (v: AdminVenue) => {
-    setBusyId(v.id);
+    setBusyKey(`${v.id}:major`);
     await onUpdateVenue(v, { isMajor: !v.isMajor }, v.isMajor ? `${v.name} is no longer a Major Venue` : `${v.name} is now a Major Venue`);
-    setBusyId(null);
+    setBusyKey(null);
+  };
+
+  const toggleDowntown = async (v: AdminVenue) => {
+    setBusyKey(`${v.id}:downtown`);
+    await onUpdateVenue(
+      v,
+      { isDowntownDistrict: !v.isDowntownDistrict },
+      v.isDowntownDistrict ? `${v.name} removed from Downtown Kingston` : `${v.name} added to Downtown Kingston`
+    );
+    setBusyKey(null);
   };
 
   return (
@@ -159,6 +172,9 @@ export default function VenuesTab({
             ))}
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowAdd(true)} className="btn-navy btn-sm h-10 shrink-0 gap-1.5 px-4">
+              <Plus size={15} /> Add venue
+            </button>
             <div className="relative w-full lg:w-[280px]">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-navy" />
               <input
@@ -197,7 +213,7 @@ export default function VenuesTab({
           </div>
         </div>
 
-        <div className="mt-6 hidden grid-cols-[1fr_150px_minmax(250px,auto)] gap-6 border-b-[1.5px] border-navy px-2 pb-2.5 text-[12px] font-medium uppercase tracking-[0.16em] text-[#6d7682] lg:grid">
+        <div className="mt-6 hidden grid-cols-[1fr_150px_minmax(340px,auto)] gap-6 border-b-[1.5px] border-navy px-2 pb-2.5 text-[12px] font-medium uppercase tracking-[0.16em] text-[#6d7682] lg:grid">
           <span>Venue · {filtered.length}</span>
           <span>This week</span>
           <span className="text-right">Admin</span>
@@ -206,7 +222,7 @@ export default function VenuesTab({
         {filtered.map((v) => (
           <div
             key={v.id}
-            className="grid grid-cols-1 items-center gap-3 border-b border-[#eceff3] px-2 py-3.5 lg:grid-cols-[1fr_150px_minmax(250px,auto)] lg:gap-6"
+            className="grid grid-cols-1 items-center gap-3 border-b border-[#eceff3] px-2 py-3.5 lg:grid-cols-[1fr_150px_minmax(340px,auto)] lg:gap-6"
           >
             <Link href={`/admin/venues/${v.id}`} className="group flex min-w-0 items-center gap-4">
               <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] text-[18px] font-bold text-white ${avatarColor(v.name)}`}>
@@ -235,15 +251,30 @@ export default function VenuesTab({
                 <button
                   type="button"
                   className="switch"
+                  data-on={!!v.isDowntownDistrict}
+                  disabled={busyKey === `${v.id}:downtown`}
+                  onClick={() => toggleDowntown(v)}
+                  aria-pressed={!!v.isDowntownDistrict}
+                  aria-label={`Downtown Kingston: ${v.name}`}
+                  title="Part of the Downtown Kingston business district"
+                >
+                  <span />
+                </button>
+                {busyKey === `${v.id}:downtown` ? <Loader2 size={12} className="animate-spin" /> : 'Downtown'}
+              </label>
+              <label className="flex items-center gap-2 text-[12px] font-bold text-navy">
+                <button
+                  type="button"
+                  className="switch"
                   data-on={!!v.isMajor}
-                  disabled={busyId === v.id}
+                  disabled={busyKey === `${v.id}:major`}
                   onClick={() => toggleMajor(v)}
                   aria-pressed={!!v.isMajor}
                   aria-label={`Major Venue: ${v.name}`}
                 >
                   <span />
                 </button>
-                {busyId === v.id ? <Loader2 size={12} className="animate-spin" /> : 'Major'}
+                {busyKey === `${v.id}:major` ? <Loader2 size={12} className="animate-spin" /> : 'Major'}
               </label>
               <Link href={`/admin/venues/${v.id}`} className="btn-outline btn-sm h-8 px-3">
                 <Edit size={13} /> Edit
@@ -284,6 +315,18 @@ export default function VenuesTab({
         )}
       </section>
 
+      {showAdd && (
+        <AddVenueModal
+          onClose={() => setShowAdd(false)}
+          showToast={showToast}
+          onCreated={async (name) => {
+            setShowAdd(false);
+            showToast(`${name} added`, 'success');
+            await onVenueCreated();
+          }}
+        />
+      )}
+
       {tierVenue && (
         <TierModal
           venue={tierVenue}
@@ -295,6 +338,113 @@ export default function VenuesTab({
           }}
         />
       )}
+    </div>
+  );
+}
+
+function AddVenueModal({
+  onClose,
+  onCreated,
+  showToast,
+}: {
+  onClose: () => void;
+  onCreated: (name: string) => Promise<void>;
+  showToast: ShowToast;
+}) {
+  const [form, setForm] = useState({ name: '', address: '', neighborhood: '', website: '', isDowntownDistrict: false, isMajor: false });
+  const [saving, setSaving] = useState(false);
+  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }));
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.address.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/venues', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          name: form.name.trim(),
+          address: form.address.trim(),
+          neighborhood: form.neighborhood.trim() || null,
+          website: form.website.trim() || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to add venue');
+      await onCreated(form.name.trim());
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to add venue', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-navy/50 p-3 sm:items-center sm:p-6" onClick={onClose}>
+      <form className="my-4 w-full max-w-lg rounded-[22px] bg-white p-5 sm:p-7" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="eyebrow-sm">Venues</p>
+            <p className="mt-1 text-[22px] font-bold text-navy">Add a venue</p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-full text-navy hover:bg-sky-soft" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mt-5 flex flex-col gap-4">
+          <div>
+            <label className="field-label" htmlFor="new-venue-name">Name *</label>
+            <input id="new-venue-name" className="field" value={form.name} onChange={(e) => set('name', e.target.value)} required autoFocus />
+          </div>
+          <div>
+            <label className="field-label" htmlFor="new-venue-address">Address *</label>
+            <input id="new-venue-address" className="field" value={form.address} onChange={(e) => set('address', e.target.value)} placeholder="123 Princess St, Kingston" required />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="field-label" htmlFor="new-venue-neighborhood">Neighbourhood</label>
+              <input id="new-venue-neighborhood" className="field" value={form.neighborhood} onChange={(e) => set('neighborhood', e.target.value)} />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="new-venue-website">Website</label>
+              <input id="new-venue-website" className="field" type="url" value={form.website} onChange={(e) => set('website', e.target.value)} placeholder="https://" />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-6">
+            {(
+              [
+                ['isDowntownDistrict', 'Downtown Kingston'],
+                ['isMajor', 'Major Venue'],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 text-[13px] font-bold text-navy">
+                <button type="button" className="switch" data-on={form[key]} onClick={() => set(key, !form[key])} aria-pressed={form[key]} aria-label={label}>
+                  <span />
+                </button>
+                {key === 'isDowntownDistrict' && <DKBadge size={18} />}
+                {label}
+              </label>
+            ))}
+          </div>
+          <p className="field-hint">You can add a logo, hours and other details from the venue&rsquo;s Edit page afterwards.</p>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-ghost">
+            Cancel
+          </button>
+          <button type="submit" className="btn-navy" disabled={saving || !form.name.trim() || !form.address.trim()}>
+            {saving && <Loader2 size={14} className="animate-spin" />} Add venue
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

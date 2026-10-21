@@ -96,7 +96,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Auto-approve if admin
-    const status = user?.role === 'admin' ? 'approved' : 'pending';
+    const isAdmin = user?.role === 'admin';
+    const status = isAdmin ? 'approved' : 'pending';
 
     const venue = await prisma.venue.create({
       data: {
@@ -106,6 +107,9 @@ export async function POST(request: NextRequest) {
         website,
         imageUrl,
         status,
+        // Only admins can flag a venue as Downtown Kingston or Major
+        ...(isAdmin && typeof body.isDowntownDistrict === 'boolean' ? { isDowntownDistrict: body.isDowntownDistrict } : {}),
+        ...(isAdmin && typeof body.isMajor === 'boolean' ? { isMajor: body.isMajor } : {}),
         ...details,
       },
     });
