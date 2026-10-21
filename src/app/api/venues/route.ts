@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getAbsoluteImageUrl } from '@/utils/url';
+import { parseVenueDetails } from '@/lib/venueDetails';
 
 // GET /api/venues - Get all venues
 export async function GET(request: NextRequest) {
@@ -16,8 +17,8 @@ export async function GET(request: NextRequest) {
     const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
     const skip = (page - 1) * limit;
 
-    // Only admins can see pending venues
-    if (status === 'pending') {
+    // Only admins can see pending venues (or every status)
+    if (status === 'pending' || status === 'all') {
       const user = await getCurrentUser();
       if (!user || user.role !== 'admin') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -49,10 +50,21 @@ export async function GET(request: NextRequest) {
         coverImageUrl: getAbsoluteImageUrl(v.coverImageUrl),
         status: v.status,
         promotionTier: v.promotionTier || 'standard',
+        eventPromotionTier: v.eventPromotionTier || 'standard',
+        specialPromotionTier: v.specialPromotionTier || 'standard',
+        isMajor: v.isMajor,
+        isDowntownDistrict: v.isDowntownDistrict,
+        venueTypes: v.venueTypes,
+        phone: v.phone,
+        instagram: v.instagram,
+        about: v.about,
+        hours: v.hours,
+        accessibility: v.accessibility,
+        accessibilityNotes: v.accessibilityNotes,
         eventCount: v._count.events,
       })),
     });
-    if (status !== 'pending') {
+    if (status !== 'pending' && status !== 'all') {
       res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
     }
     return res;
@@ -74,6 +86,7 @@ export async function POST(request: NextRequest) {
     }
     const body = await request.json();
     const { name, address, neighborhood, website, imageUrl } = body;
+    const details = parseVenueDetails(body);
 
     if (!name || !address) {
       return NextResponse.json(
@@ -93,6 +106,7 @@ export async function POST(request: NextRequest) {
         website,
         imageUrl,
         status,
+        ...details,
       },
     });
 

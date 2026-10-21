@@ -1,16 +1,19 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from 'react';
 import Link from 'next/link';
-import { Heart, Calendar, ArrowRight, FileText, Clock, CheckCircle, AlertTriangle, XCircle, Loader2, Utensils, Trash2, Ban, ChevronDown, ChevronUp, Edit } from 'lucide-react';
+import { Calendar, ChevronDown, Loader2, MapPin, Pencil, Search, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
-import { EventCard, DatePicker } from '@/components';
-import { format, parseISO, startOfDay, isWithinInterval, isAfter, isEqual, isToday, isTomorrow, addDays } from 'date-fns';
-import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
-import SmartImage from '@/components/ui/SmartImage';
+import { format, parseISO, isToday, isTomorrow, addDays } from 'date-fns';
+import type { Event, EventCategory } from '@/types/event';
+import { categoryLabels, categoryDotColors } from '@/constants/categories';
+import { DatePicker } from '@/components';
+import { formatPrice } from '@/utils/price';
 import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
+import { DAY_NAMES, DAY_SHORT } from '@/utils/recurrence';
+import { SaveButton, formatTime, formatTimeShort, isAllDayEvent, primaryCategory } from '@/components/brand';
 
 interface SubmittedEvent {
   id: string;
@@ -21,6 +24,7 @@ interface SubmittedEvent {
   endTime?: string;
   price?: string;
   imageUrl?: string;
+  isAllDay?: boolean;
   status: string;
   submittedById?: string;
   createdAt: string;
@@ -33,1117 +37,625 @@ interface SubmittedEvent {
   recurrenceDays?: number[];
   recurrenceDay?: number;
   recurrenceEndDate?: string;
+  rejectionReason?: string;
+  /** Submitted by someone else at one of the organizer's venues (verified organizers only) */
+  fromVenue?: boolean;
 }
 
-interface EventGroup {
-  parentEvent: SubmittedEvent;
-  instances: SubmittedEvent[];
+/** One card on the Submitted tab: a one-off listing, or a whole recurring series */
+interface Submission {
+  key: string;
+  event: SubmittedEvent;
+  status: string;
+  untilDate?: string;
 }
 
-export default function MyEventsPage() {
+type DateWindow =
+  | { kind: 'upcoming' }
+  | { kind: 'week' }
+  | { kind: 'past' }
+  | { kind: 'day'; date: string };
+
+const EVENTS_PREVIEW = 10;
+const SPECIALS_PREVIEW = 8;
+
+const isSpecial = (e: { categories: string[] }) =>
+  e.categories.includes('food-deal') || e.categories.includes('food') || e.categories.includes('drink');
+
+const todayStr = () => format(new Date(), 'yyyy-MM-dd');
+
+function seriesDays(e: Pick<Event, 'recurrenceDays' | 'recurrenceDay' | 'date'>): number[] {
+  if (e.recurrenceDays && e.recurrenceDays.length > 0) return [...e.recurrenceDays].sort((a, b) => a - b);
+  if (e.recurrenceDay != null) return [e.recurrenceDay];
+  return [parseISO(e.date).getDay()];
+}
+
+/** "Thursdays", "Mondays & Wednesdays", "Mon, Wed & Fri", "Every other Tuesday" */
+function pluralDaysLabel(e: SubmittedEvent) {
+  const days = seriesDays(e);
+  if (e.recurrencePattern === 'monthly') return `Monthly on ${DAY_NAMES[days[0]]}`;
+  if (e.recurrencePattern === 'biweekly') {
+    return days.length === 1 ? `Every other ${DAY_NAMES[days[0]]}` : getRecurrenceLabel(e);
+  }
+  if (days.length === 1) return `${DAY_NAMES[days[0]]}s`;
+  if (days.length === 2) return `${DAY_NAMES[days[0]]}s & ${DAY_NAMES[days[1]]}s`;
+  const short = days.map((d) => DAY_SHORT[d]);
+  return `${short.slice(0, -1).join(', ')} & ${short[short.length - 1]}`;
+}
+
+/** "Every Tue", "Every Fri & Sat" */
+function everyDaysLabel(e: Event) {
+  if (e.recurrencePattern && e.recurrencePattern !== 'weekly') return getRecurrenceLabel(e);
+  const short = seriesDays(e).map((d) => DAY_SHORT[d]);
+  if (short.length <= 2) return `Every ${short.join(' & ')}`;
+  return `Every ${short.slice(0, -1).join(', ')} & ${short[short.length - 1]}`;
+}
+
+function specialHours(e: Pick<Event, 'isAllDay' | 'startTime' | 'endTime'>) {
+  if (isAllDayEvent(e)) return 'All day';
+  if (!e.endTime) return `From ${formatTimeShort(e.startTime)}`;
+  return `${formatTimeShort(e.startTime)} – ${formatTimeShort(e.endTime)}`;
+}
+
+function inWindow(date: string, w: DateWindow) {
+  const today = todayStr();
+  if (w.kind === 'past') return date < today;
+  if (w.kind === 'week') return date >= today && date <= format(addDays(new Date(), 6), 'yyyy-MM-dd');
+  if (w.kind === 'day') return date === w.date;
+  return date >= today;
+}
+
+function matchesSearch(e: Event, q: string) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return e.title.toLowerCase().includes(needle) || e.venue?.name.toLowerCase().includes(needle);
+}
+
+function StatusPill({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    approved: 'bg-[#c1efe4] text-[#1a1a1a]',
+    pending: 'bg-sun text-navy',
+    rejected: 'bg-[#ffe1da] text-[#ad290c]',
+    cancelled: 'bg-[#e9ecf0] text-ink-muted',
+  };
+  return (
+    <span className={`tag shrink-0 px-3 py-1.5 tracking-[0.12em] ${styles[status] ?? 'bg-sky text-navy'}`}>{status}</span>
+  );
+}
+
+function CategoryDot({ category }: { category?: EventCategory }) {
+  return <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${category ? categoryDotColors[category] : 'bg-ink-muted'}`} />;
+}
+
+function DayBand({ date, first }: { date: string; first: boolean }) {
+  const d = parseISO(date);
+  const prefix = isToday(d) ? 'Today · ' : isTomorrow(d) ? 'Tomorrow · ' : '';
+  return (
+    <p className={`${first ? 'pt-7' : 'pt-14'} pb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-navy`}>
+      — {prefix}
+      {format(d, 'EEEE, MMMM d')}
+    </p>
+  );
+}
+
+function SavedEventRow({ event, onUnsave }: { event: Event; onUnsave: () => void }) {
+  const cat = primaryCategory(event);
+  const price = formatPrice(event.price) || 'Free';
+  return (
+    <div className="group relative flex items-center gap-5 border-b border-[#eceff3] py-4">
+      <Link href={`/events/${event.id}`} className="absolute inset-0" aria-label={event.title} />
+      <span className="pointer-events-none w-[72px] shrink-0 text-[14px] font-medium text-navy">
+        {isAllDayEvent(event) ? 'All day' : formatTime(event.startTime)}
+      </span>
+      <span className="pointer-events-none flex min-w-0 flex-1 flex-col gap-1">
+        <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
+        <span className="flex min-w-0 items-center gap-2 text-[13px] text-[#6d7682]">
+          <CategoryDot category={cat} />
+          <span className="truncate">
+            {cat ? categoryLabels[cat] : 'Event'} · {event.venue.name}
+          </span>
+        </span>
+      </span>
+      <span className={`pointer-events-none shrink-0 text-[14px] font-medium ${price === 'Free' ? 'text-link' : 'text-navy'}`}>
+        {price}
+      </span>
+      <SaveButton saved onClick={onUnsave} size={17} className="relative z-10 text-navy" />
+    </div>
+  );
+}
+
+function SavedSpecialRow({ event, when, onUnsave }: { event: Event; when: string; onUnsave: () => void }) {
+  return (
+    <div className="group relative flex items-start justify-between gap-3 border-b border-[#dce7f1] py-3.5">
+      <Link href={`/events/${event.id}`} className="absolute inset-0" aria-label={event.title} />
+      <div className="pointer-events-none flex min-w-0 flex-col gap-1">
+        <p className="text-[15px] font-bold text-navy group-hover:underline">{event.title}</p>
+        <p className="truncate text-[13px] text-[#69717d]">{event.venue.name}</p>
+        <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-link">{when}</p>
+      </div>
+      <SaveButton saved onClick={onUnsave} size={17} className="relative z-10 text-navy" />
+    </div>
+  );
+}
+
+function MyEventsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, isLoading: authLoading } = useAuth();
-  const { events, userLikes, isLiked, toggleLike, getLikeCount } = useEvents();
-  const [activeTab, setActiveTab] = useState<'liked' | 'submitted'>('liked');
-  const [likedView, setLikedView] = useState<'all' | 'events' | 'specials'>('all');
+  const { events, userLikes, toggleLike } = useEvents();
+  const [activeTab, setActiveTab] = useState<'liked' | 'submitted'>(
+    searchParams.get('tab') === 'submitted' ? 'submitted' : 'liked'
+  );
+
+  // Saved tab
+  const [dateWindow, setDateWindow] = useState<DateWindow>({ kind: 'upcoming' });
+  const [showDateMenu, setShowDateMenu] = useState(false);
+  const [pickDate, setPickDate] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showAllEvents, setShowAllEvents] = useState(false);
+  const [showAllSpecials, setShowAllSpecials] = useState(false);
+  const dateMenuRef = useRef<HTMLDivElement>(null);
+
+  // Submitted tab
   const [submittedEvents, setSubmittedEvents] = useState<SubmittedEvent[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
-  const [dateFilterMode, setDateFilterMode] = useState<'none' | 'single' | 'range'>('none');
-  const [dateFilter, setDateFilter] = useState('');
-  const [dateRangeStart, setDateRangeStart] = useState<string>('');
-  const [dateRangeEnd, setDateRangeEnd] = useState<string>('');
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [tempDateMode, setTempDateMode] = useState<'single' | 'range'>('single');
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const datePickerRef = useRef<HTMLDivElement>(null);
 
-  const allLikedEvents = useMemo(() => {
-    if (!events || !userLikes) return [];
-    return events.filter(event => userLikes.includes(event.id));
-  }, [events, userLikes]);
-  
-  // Separate into regular events and food & drink specials, then group by date
-  const likedRegularEventsByDate = useMemo(() => {
-    const filtered = allLikedEvents.filter(event => 
-      !event.categories.includes('food-deal') && 
-      !event.categories.includes('food') && 
-      !event.categories.includes('drink')
-    );
-    
-    // Filter by date range (default: today onwards)
-    const today = startOfDay(new Date());
-    const filteredByDate = filtered.filter(event => {
-      const eventDate = startOfDay(parseISO(event.date));
-      
-      if (dateRangeStart && dateRangeEnd) {
-        const rangeStart = startOfDay(parseISO(dateRangeStart));
-        const rangeEnd = startOfDay(parseISO(dateRangeEnd));
-        return isWithinInterval(eventDate, { start: rangeStart, end: rangeEnd });
-      }
-      
-      // Default: today onwards
-      return isAfter(eventDate, today) || isEqual(eventDate, today);
-    }).sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date);
-      if (dateCompare !== 0) return dateCompare;
-      return a.startTime.localeCompare(b.startTime);
-    });
-    
-    // Group by date
-    const grouped: { [date: string]: typeof filteredByDate } = {};
-    filteredByDate.forEach(event => {
-      if (!grouped[event.date]) {
-        grouped[event.date] = [];
-      }
-      grouped[event.date].push(event);
-    });
-    
-    return grouped;
-  }, [allLikedEvents, dateFilterMode, dateFilter, dateRangeStart, dateRangeEnd]);
-  
-  const likedSpecialsByDate = useMemo(() => {
-    const filtered = allLikedEvents.filter(event => 
-      event.categories.includes('food-deal') || 
-      event.categories.includes('food') || 
-      event.categories.includes('drink')
-    );
-    
-    // Filter by date (default: today onwards)
-    const today = startOfDay(new Date());
-    const filteredByDate = filtered.filter(event => {
-      const eventDate = startOfDay(parseISO(event.date));
-      
-      if (dateFilterMode === 'single' && dateFilter) {
-        const filterDate = startOfDay(parseISO(dateFilter));
-        return isEqual(eventDate, filterDate);
-      } else if (dateFilterMode === 'range' && dateRangeStart && dateRangeEnd) {
-        const rangeStart = startOfDay(parseISO(dateRangeStart));
-        const rangeEnd = startOfDay(parseISO(dateRangeEnd));
-        return isWithinInterval(eventDate, { start: rangeStart, end: rangeEnd });
-      }
-      
-      // Default: today onwards
-      return isAfter(eventDate, today) || isEqual(eventDate, today);
-    }).sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date);
-      if (dateCompare !== 0) return dateCompare;
-      return a.startTime.localeCompare(b.startTime);
-    });
-    
-    // Group by date
-    const grouped: { [date: string]: typeof filteredByDate } = {};
-    filteredByDate.forEach(event => {
-      if (!grouped[event.date]) {
-        grouped[event.date] = [];
-      }
-      grouped[event.date].push(event);
-    });
-    
-    return grouped;
-  }, [allLikedEvents, dateFilterMode, dateFilter, dateRangeStart, dateRangeEnd]);
-  
-  // Get sorted date arrays for iteration
-  const regularEventDates = useMemo(() => {
-    return Object.keys(likedRegularEventsByDate).sort();
-  }, [likedRegularEventsByDate]);
-  
-  const specialDates = useMemo(() => {
-    return Object.keys(likedSpecialsByDate).sort();
-  }, [likedSpecialsByDate]);
-  
-  // Combined dates for "All Liked" view (default: today, tomorrow, day after tomorrow)
-  const allLikedDates = useMemo(() => {
-    const today = new Date();
-    const tomorrow = addDays(today, 1);
-    const dayAfterTomorrow = addDays(today, 2);
-    
-    // Get all unique dates from both events and specials
-    const allDatesSet = new Set([
-      ...Object.keys(likedRegularEventsByDate),
-      ...Object.keys(likedSpecialsByDate)
-    ]);
-    
-    // If date range is set, filter by range
-    if (dateRangeStart && dateRangeEnd) {
-      const rangeStart = startOfDay(parseISO(dateRangeStart));
-      const rangeEnd = startOfDay(parseISO(dateRangeEnd));
-      return Array.from(allDatesSet)
-        .filter(dateStr => {
-          const date = startOfDay(parseISO(dateStr));
-          return isWithinInterval(date, { start: rangeStart, end: rangeEnd });
-        })
-        .sort();
-    }
-    
-    // Default: today, tomorrow, and day after tomorrow
-    const defaultDates = [
-      format(today, 'yyyy-MM-dd'),
-      format(tomorrow, 'yyyy-MM-dd'),
-      format(dayAfterTomorrow, 'yyyy-MM-dd')
-    ];
-    
-    return Array.from(allDatesSet)
-      .filter(dateStr => defaultDates.includes(dateStr))
-      .sort();
-  }, [likedRegularEventsByDate, likedSpecialsByDate, dateFilterMode, dateFilter, dateRangeStart, dateRangeEnd]);
-  
-  // Get button display text
-  const getDateButtonText = () => {
-    if (dateFilterMode === 'single' && dateFilter) {
-      return dateFilter;
-    } else if (dateFilterMode === 'range' && dateRangeStart && dateRangeEnd) {
-      return `${dateRangeStart} to ${dateRangeEnd}`;
-    }
-    return 'yyyy-mm-dd';
-  };
-  
-  // Close dropdown when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
-        setShowDatePicker(false);
-      }
+    if (!showDateMenu) return;
+    const onClick = (e: MouseEvent) => {
+      if (dateMenuRef.current && !dateMenuRef.current.contains(e.target as Node)) setShowDateMenu(false);
     };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showDateMenu]);
 
-    if (showDatePicker) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+  const saved = useMemo(
+    () =>
+      events
+        .filter((e) => userLikes.includes(e.id))
+        .filter((e) => inWindow(e.date, dateWindow))
+        .filter((e) => matchesSearch(e, searchQuery))
+        .sort((a, b) =>
+          dateWindow.kind === 'past'
+            ? b.date.localeCompare(a.date) || a.startTime.localeCompare(b.startTime)
+            : a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+        ),
+    [events, userLikes, dateWindow, searchQuery]
+  );
+
+  const savedEvents = useMemo(() => saved.filter((e) => !isSpecial(e)), [saved]);
+
+  // Specials split into one-off ("Upcoming") and weekly recurring (one row per series)
+  const { upcomingSpecials, recurringSpecials } = useMemo(() => {
+    const upcoming: Event[] = [];
+    const recurring: Event[] = [];
+    const seenSeries = new Set<string>();
+    for (const e of saved.filter(isSpecial)) {
+      if (e.isRecurring && e.seriesId) {
+        if (seenSeries.has(e.seriesId)) continue;
+        seenSeries.add(e.seriesId);
+        recurring.push(e);
+      } else {
+        upcoming.push(e);
+      }
     }
-  }, [showDatePicker]);
+    return { upcomingSpecials: upcoming, recurringSpecials: recurring };
+  }, [saved]);
+
+  const savedEventsByDate = useMemo(() => {
+    const shown = showAllEvents ? savedEvents : savedEvents.slice(0, EVENTS_PREVIEW);
+    const map = new Map<string, Event[]>();
+    shown.forEach((e) => {
+      if (!map.has(e.date)) map.set(e.date, []);
+      map.get(e.date)!.push(e);
+    });
+    return [...map.entries()];
+  }, [savedEvents, showAllEvents]);
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/login');
-    }
+    if (!authLoading && !user) router.push('/login?redirect=/my-events');
   }, [user, authLoading, router]);
 
-  // Fetch submitted events for all users
   const fetchSubmissions = useCallback(async () => {
-    if (user) {
-      setLoadingSubmissions(true);
-      try {
-        const res = await fetch('/api/events/my-submissions');
-        const data = await res.json();
-        console.log('[MyEvents] Fetched submissions:', data.events?.length || 0, 'events');
-        if (data.events) {
-          setSubmittedEvents(data.events);
-        }
-      } catch (error) {
-        console.error('[MyEvents] Error fetching submissions:', error);
-      } finally {
-        setLoadingSubmissions(false);
-      }
+    if (!user) return;
+    setLoadingSubmissions(true);
+    try {
+      const res = await fetch('/api/events/my-submissions');
+      const data = await res.json();
+      if (data.events) setSubmittedEvents(data.events);
+    } catch (error) {
+      console.error('[MyEvents] Error fetching submissions:', error);
+    } finally {
+      setLoadingSubmissions(false);
     }
   }, [user]);
 
   useEffect(() => {
-    if (user && activeTab === 'submitted') {
-      fetchSubmissions();
-    }
+    if (user && activeTab === 'submitted') fetchSubmissions();
   }, [user, activeTab, fetchSubmissions]);
 
-  const groupedSubmissions = useMemo((): (SubmittedEvent | EventGroup)[] => {
-    if (submittedEvents.length === 0) return [];
+  const submissions = useMemo((): Submission[] => {
+    const today = todayStr();
     const seriesMap = new Map<string, SubmittedEvent[]>();
-    const standalone: SubmittedEvent[] = [];
-
+    const result: Submission[] = [];
     for (const ev of submittedEvents) {
       if (ev.seriesId) {
         const list = seriesMap.get(ev.seriesId) || [];
         list.push(ev);
         seriesMap.set(ev.seriesId, list);
       } else {
-        standalone.push(ev);
+        result.push({ key: ev.id, event: ev, status: ev.status });
       }
     }
-
-    const groups: (SubmittedEvent | EventGroup)[] = [];
-    for (const [, instances] of seriesMap) {
+    for (const [seriesId, instances] of seriesMap) {
       instances.sort((a, b) => a.date.localeCompare(b.date));
-      if (instances.length > 1) {
-        groups.push({ parentEvent: instances[0], instances });
-      } else {
-        groups.push(instances[0]);
-      }
+      // Represent the series by its next occurrence (or the last one if it's over)
+      const rep = instances.find((i) => i.date >= today && i.status !== 'cancelled') ?? instances[instances.length - 1];
+      const status = instances.some((i) => i.status === 'pending') ? 'pending' : rep.status;
+      result.push({
+        key: seriesId,
+        event: rep,
+        status,
+        untilDate: rep.recurrenceEndDate || instances[instances.length - 1].date,
+      });
     }
-
-    return [...groups, ...standalone];
+    return result.sort((a, b) => b.event.createdAt.localeCompare(a.event.createdAt));
   }, [submittedEvents]);
 
-  const toggleGroup = (seriesKey: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(seriesKey)) next.delete(seriesKey);
-      else next.add(seriesKey);
-      return next;
-    });
-  };
+  const hasVenueListings = submittedEvents.some((e) => e.fromVenue);
+  const submittedEventCards = submissions.filter((s) => !isSpecial(s.event));
+  const submittedSpecialCards = submissions.filter((s) => isSpecial(s.event));
 
-  const handleCancelEvent = async (eventId: string) => {
-    if (!confirm('Are you sure you want to cancel this event?')) return;
-    setActionLoading(eventId);
-    try {
-      const res = await fetch(`/api/events/${eventId}/cancel`, { method: 'POST' });
-      if (res.ok) {
-        await fetchSubmissions();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to cancel event');
-      }
-    } catch {
-      alert('Network error. Please try again.');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleDeleteEvent = async (event: SubmittedEvent) => {
-    let scope: 'this' | 'future' = 'this';
-
-    if (event.seriesId) {
-      if (!confirm('Permanently delete this event occurrence? This cannot be undone.')) return;
-      const deleteFuture = confirm(
-        'Also delete this and all future occurrences in the series?\n\nOK = this & all future\nCancel = only this occurrence'
-      );
-      scope = deleteFuture ? 'future' : 'this';
-    } else {
-      if (!confirm('Are you sure you want to permanently delete this event? This cannot be undone.')) return;
-    }
-
-    setActionLoading(event.id);
-    try {
-      const res = await fetch(`/api/events/${event.id}?scope=${scope}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchSubmissions();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to delete event');
-      }
-    } catch {
-      alert('Network error. Please try again.');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  if (authLoading) {
+  if (authLoading || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 size={32} className="animate-spin text-primary" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-navy" />
       </div>
     );
   }
 
-  if (!user) {
-    return null;
-  }
-  
-  const isOrganizer = user.role === 'organizer' || user.role === 'admin';
+  const dateMenuLabel =
+    dateWindow.kind === 'day'
+      ? format(parseISO(dateWindow.date), 'EEE, MMM d')
+      : dateWindow.kind === 'week'
+      ? 'This week'
+      : dateWindow.kind === 'past'
+      ? 'Past'
+      : 'Pick a date';
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'approved':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-            <CheckCircle size={12} />
-            Approved
-          </span>
-        );
-      case 'pending':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-            <AlertTriangle size={12} />
-            Pending Review
-          </span>
-        );
-      case 'rejected':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-            <XCircle size={12} />
-            Rejected
-          </span>
-        );
-      default:
-        return null;
-    }
-  };
+  const specialsCount = upcomingSpecials.length + recurringSpecials.length;
+  let specialsBudget = showAllSpecials ? Infinity : SPECIALS_PREVIEW;
+  const shownUpcoming = upcomingSpecials.slice(0, specialsBudget);
+  specialsBudget -= shownUpcoming.length;
+  const shownRecurring = recurringSpecials.slice(0, Math.max(0, specialsBudget));
+  const unsave = (id: string) => toggleLike(id);
 
   return (
-    <div className="min-h-screen">
-      {/* Header */}
-      <section className="bg-gradient-to-br from-muted to-background py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3 mb-4">
-            {activeTab === 'liked' ? (
-              <Heart size={32} className="text-primary" />
-            ) : (
-              <FileText size={32} className="text-primary" />
-            )}
-            <h1 className="font-display text-4xl sm:text-5xl text-foreground">
-              My Events
-            </h1>
-          </div>
-          <p className="text-muted-foreground text-lg">
-            {activeTab === 'liked' 
-              ? "Events you've saved for later. Never miss out on what interests you."
-              : "Events you've submitted. Track their approval status here."
-            }
-          </p>
+    <div className="page-container pb-24 pt-10">
+      <p className="eyebrow mb-7">— My Events</p>
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+        <h1 className="display-section">
+          {activeTab === 'liked' ? (
+            <>
+              Your saved
+              <br />
+              plans
+            </>
+          ) : (
+            <>
+              Your
+              <br />
+              submissions
+            </>
+          )}
+        </h1>
+        <div className="inline-flex items-center gap-1 self-start rounded-full bg-[#fff3de] p-1 sm:self-auto">
+          {(
+            [
+              ['liked', 'Saved'],
+              ['submitted', 'Submitted'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`inline-flex h-10 items-center rounded-full px-5 text-[14px] uppercase transition-colors ${
+                activeTab === id ? 'bg-sun font-bold text-black' : 'font-medium text-navy hover:bg-sun/30'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      </section>
+      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Tabs */}
-        <div className="flex gap-2 mb-8 border-b border-border">
-            <button
-              onClick={() => setActiveTab('liked')}
-              className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors relative ${
-                activeTab === 'liked'
-                  ? 'text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Heart size={18} />
-              Liked
-              {activeTab === 'liked' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+      {activeTab === 'liked' ? (
+        <>
+          {/* Toolbar */}
+          <div className="mt-[78px] flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="relative" ref={dateMenuRef}>
+              <button
+                onClick={() => setShowDateMenu(!showDateMenu)}
+                className="flex h-[46px] w-full items-center justify-center gap-2 whitespace-nowrap rounded-full border border-line bg-white px-[18px] text-[14px] font-medium text-navy hover:border-navy"
+              >
+                <Calendar size={18} className="text-link" />
+                {dateMenuLabel}
+                <ChevronDown size={16} />
+              </button>
+              {showDateMenu && (
+                <div className="absolute left-0 top-full z-40 mt-2 w-[300px] rounded-[18px] border border-line bg-white p-4 shadow-[0_18px_40px_-12px_rgba(27,42,65,0.25)]">
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        ['upcoming', 'Upcoming'],
+                        ['week', 'This week'],
+                        ['past', 'Past'],
+                      ] as const
+                    ).map(([kind, label]) => (
+                      <button
+                        key={kind}
+                        className="chip h-8 px-3"
+                        data-active={dateWindow.kind === kind}
+                        onClick={() => {
+                          setDateWindow({ kind });
+                          setShowDateMenu(false);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <DatePicker value={pickDate} onChange={setPickDate} placeholder="Select date" className="text-sm" />
+                  <button
+                    className="btn-navy btn-sm mt-3 w-full"
+                    onClick={() => {
+                      if (pickDate) setDateWindow({ kind: 'day', date: pickDate });
+                      setShowDateMenu(false);
+                    }}
+                  >
+                    Apply
+                  </button>
+                </div>
               )}
-            </button>
-            <button
-              onClick={() => setActiveTab('submitted')}
-              className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors relative ${
-                activeTab === 'submitted'
-                  ? 'text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <FileText size={18} />
-              My Submissions
-              {submittedEvents.filter(e => e.status === 'pending').length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 text-xs bg-amber-500 text-white rounded-full">
-                  {submittedEvents.filter(e => e.status === 'pending').length}
-                </span>
+            </div>
+            <div className="relative sm:w-[200px]">
+              <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-navy" />
+              <input
+                type="text"
+                placeholder="Search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-[46px] w-full rounded-full border border-line bg-white pl-11 pr-10 text-[16px] text-navy placeholder:text-ink-muted outline-none focus:border-navy"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-ink-muted hover:text-navy"
+                  aria-label="Clear search"
+                >
+                  <X size={16} />
+                </button>
               )}
-              {activeTab === 'submitted' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-              )}
-            </button>
+            </div>
           </div>
 
-        {/* Liked Events Tab */}
-        {activeTab === 'liked' && (
-          <>
-            {allLikedEvents.length > 0 ? (
-              <>
-                {/* View Toggle Buttons */}
-                <div className="mb-6 flex gap-3">
-                  <button
-                    onClick={() => setLikedView('all')}
-                    className={`px-6 py-3 rounded-xl font-semibold text-base transition-all ${
-                      likedView === 'all'
-                        ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/25 scale-105'
-                        : 'bg-card text-foreground border-2 border-border hover:border-primary/50 hover:shadow-md'
-                    }`}
-                  >
-                    All Liked
-                  </button>
-                  <button
-                    onClick={() => setLikedView('events')}
-                    className={`px-6 py-3 rounded-xl font-semibold text-base transition-all ${
-                      likedView === 'events'
-                        ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/25 scale-105'
-                        : 'bg-card text-foreground border-2 border-border hover:border-primary/50 hover:shadow-md'
-                    }`}
-                  >
-                    Liked Events
-                  </button>
-                  <button
-                    onClick={() => setLikedView('specials')}
-                    className={`px-6 py-3 rounded-xl font-semibold text-base transition-all ${
-                      likedView === 'specials'
-                        ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/25 scale-105'
-                        : 'bg-card text-foreground border-2 border-border hover:border-primary/50 hover:shadow-md'
-                    }`}
-                  >
-                    Liked Specials
-                  </button>
-                </div>
-
-                {/* Calendar Filter */}
-                <div className="mb-6 flex justify-end">
-                  <div className="relative" ref={datePickerRef}>
-                    <button
-                      onClick={() => {
-                        const wasOpen = showDatePicker;
-                        setShowDatePicker(!wasOpen);
-                        if (!wasOpen) {
-                          // Initialize temp mode based on current filter mode
-                          if (dateFilterMode === 'single' || dateFilterMode === 'range') {
-                            setTempDateMode(dateFilterMode);
-                          } else {
-                            setTempDateMode('single');
-                          }
-                        }
-                      }}
-                      className={`px-4 py-2.5 bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-sm flex items-center gap-2 min-w-[140px] justify-center ${
-                        dateFilterMode !== 'none' ? 'text-primary font-medium' : 'text-muted-foreground'
-                      }`}
-                    >
-                      <Calendar size={16} className={dateFilterMode !== 'none' ? 'text-primary' : 'text-muted-foreground'} />
-                      <span>{getDateButtonText()}</span>
-                    </button>
-                    
-                    {/* Date Picker Dropdown */}
-                    {showDatePicker && (
-                      <div className="absolute top-full mt-2 right-0 bg-card border border-border rounded-xl shadow-lg z-50 p-4 min-w-[280px]">
-                        {/* Mode Toggle */}
-                        <div className="flex gap-2 mb-4">
-                          <button
-                            onClick={() => setTempDateMode('single')}
-                            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                              tempDateMode === 'single'
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                            }`}
-                          >
-                            Single Date
-                          </button>
-                          <button
-                            onClick={() => setTempDateMode('range')}
-                            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                              tempDateMode === 'range'
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                            }`}
-                          >
-                            Date Range
-                          </button>
-                        </div>
-                        
-                        {/* Date Input(s) */}
-                        {tempDateMode === 'single' ? (
-                          <div className="mb-4">
-                            <DatePicker
-                              value={dateFilter}
-                              onChange={(value) => setDateFilter(value)}
-                              placeholder="Select date"
-                              className="text-sm"
-                            />
-                          </div>
-                        ) : (
-                          <div className="space-y-3 mb-4">
-                            <DatePicker
-                              value={dateRangeStart}
-                              onChange={(value) => setDateRangeStart(value)}
-                              placeholder="Start date"
-                              className="text-sm"
-                            />
-                            <DatePicker
-                              value={dateRangeEnd}
-                              onChange={(value) => setDateRangeEnd(value)}
-                              placeholder="End date"
-                              className="text-sm"
-                            />
-                          </div>
-                        )}
-                        
-                        {/* Actions */}
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              setDateFilterMode(tempDateMode);
-                              if (tempDateMode === 'single') {
-                                // Use the current dateFilter value from the input
-                                if (!dateFilter) {
-                                  setDateFilter(format(new Date(), 'yyyy-MM-dd'));
-                                }
-                              } else if (tempDateMode === 'range') {
-                                // Use the current dateRangeStart and dateRangeEnd values from the inputs
-                                if (!dateRangeStart) setDateRangeStart(format(new Date(), 'yyyy-MM-dd'));
-                                if (!dateRangeEnd) setDateRangeEnd(format(addDays(new Date(), 7), 'yyyy-MM-dd'));
-                              }
-                              setShowDatePicker(false);
-                            }}
-                            className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
-                          >
-                            Apply
-                          </button>
-                          <button
-                            onClick={() => {
-                              setDateFilterMode('none');
-                              setDateFilter('');
-                              setDateRangeStart('');
-                              setDateRangeEnd('');
-                              setShowDatePicker(false);
-                            }}
-                            className="px-4 py-2 bg-muted text-muted-foreground rounded-lg text-sm font-medium hover:bg-muted/80 transition-colors"
-                          >
-                            Clear
-                          </button>
-                        </div>
+          {saved.length === 0 ? (
+            <div className="mt-7 rounded-[22px] bg-sky-soft px-6 py-14 text-center">
+              <p className="text-[24px] font-bold text-navy">
+                {searchQuery ? <>No saved plans match &ldquo;{searchQuery}&rdquo;</> : <>Nothing saved {dateWindow.kind === 'past' ? 'in the past' : 'yet'}</>}
+              </p>
+              <p className="mx-auto mt-3 max-w-[420px] text-[14px] text-ink-muted">
+                Tap the bookmark on any event or special and it&rsquo;ll show up here, sorted by day.
+              </p>
+              <Link href="/events" className="btn-sun mt-6">
+                Browse what&rsquo;s on →
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-7 flex flex-col gap-10 lg:flex-row lg:items-start lg:gap-14">
+              {/* Saved events */}
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[22px] font-bold tracking-[-0.01em] text-navy">Saved Events</h2>
+                {savedEvents.length === 0 ? (
+                  <p className="pt-6 text-[14px] text-ink-muted">No saved events{dateWindow.kind === 'past' ? ' in the past' : ''}.</p>
+                ) : (
+                  <>
+                    {savedEventsByDate.map(([date, items], i) => (
+                      <div key={date}>
+                        <DayBand date={date} first={i === 0} />
+                        {items.map((e) => (
+                          <SavedEventRow key={e.id} event={e} onUnsave={() => unsave(e.id)} />
+                        ))}
                       </div>
+                    ))}
+                    {savedEvents.length > EVENTS_PREVIEW && !showAllEvents && (
+                      <button onClick={() => setShowAllEvents(true)} className="link-arrow mt-5 text-[14px]">
+                        Show all {savedEvents.length} →
+                      </button>
                     )}
-                  </div>
-                </div>
+                  </>
+                )}
+              </div>
 
-                {/* All Liked View - Same layout as browse tab "All" */}
-                {likedView === 'all' && (
-                  <div className="space-y-10">
-                    {allLikedDates.length > 0 ? (
-                      allLikedDates.map((dateStr) => {
-                        const date = parseISO(dateStr);
-                        const headingLabel = isToday(date) 
-                          ? 'Today' 
-                          : isTomorrow(date) 
-                            ? 'Tomorrow' 
-                            : format(date, 'EEEE, MMMM d');
-                        
-                        const eventsForDate = likedRegularEventsByDate[dateStr] || [];
-                        const dealsForDate = likedSpecialsByDate[dateStr] || [];
-                        
-                        return (
-                          <div key={dateStr}>
-                            {/* Date Section Header */}
-                            <div className="mb-3 pb-2 border-b border-border">
-                              <p className="text-primary font-medium text-sm uppercase tracking-wider">
-                                {format(date, 'EEEE, MMMM d')}
-                              </p>
-                              <h3 className="font-display text-xl text-foreground">
-                                {headingLabel}
-                              </h3>
-                            </div>
-                            
-                            {/* Two columns: Events and Food & Drink Specials side by side */}
-                            <div className="flex flex-col lg:flex-row gap-6">
-                              {/* Events Column */}
-                              <div className="flex-[1.2] min-w-0">
-                                <h4 className="font-display text-lg text-foreground mb-3 flex items-center gap-2">
-                                  <Calendar size={18} className="text-primary" />
-                                  Events
-                                  <span className="text-sm font-normal text-muted-foreground">({eventsForDate.length})</span>
-                                </h4>
-                                {eventsForDate.length > 0 ? (
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {eventsForDate.map((event) => (
-                                      <EventCard key={event.id} event={event} />
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className="text-center py-6 bg-muted rounded-xl">
-                                    <Calendar size={24} className="mx-auto text-muted-foreground mb-2" />
-                                    <p className="text-muted-foreground text-sm">No events</p>
-                                  </div>
-                                )}
-                              </div>
-                              
-                              {/* Food & Drink Specials Column */}
-                              <div className="lg:w-[32rem] flex-shrink-0">
-                                <h4 className="font-display text-lg text-foreground mb-3 flex items-center gap-2">
-                                  <Utensils size={18} className="text-primary" />
-                                  Food & Drink Specials
-                                  <span className="text-sm font-normal text-muted-foreground">({dealsForDate.length})</span>
-                                </h4>
-                                {dealsForDate.length > 0 ? (
-                                  <div className="space-y-3">
-                                    {dealsForDate.map((deal) => {
-                                      const liked = isLiked(deal.id);
-                                      const likeCount = getLikeCount(deal.id);
-                                      const handleLikeClick = (e: React.MouseEvent) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        if (!user) {
-                                          router.push('/login');
-                                          return;
-                                        }
-                                        toggleLike(deal.id);
-                                      };
-                                      return (
-                                        <div
-                                          key={deal.id}
-                                          className="group relative flex items-center gap-3 p-2 rounded-xl bg-muted/50 hover:bg-muted transition-all"
-                                        >
-                                          <Link
-                                            href={`/events/${deal.id}`}
-                                            className="flex items-center gap-3 flex-1 min-w-0"
-                                          >
-                                            <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                              <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                                                <Utensils size={18} className="text-primary" />
-                                              </div>
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                              <h5 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1 text-base">
-                                                {deal.title}
-                                              </h5>
-                                              <div className="mt-1 min-h-[1.5rem]">
-                                                <div className="flex items-center gap-2 opacity-100 group-hover:opacity-0 group-hover:hidden transition-opacity duration-200">
-                                                  {deal.price && (
-                                                    <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold text-sm">
-                                                      {deal.price}
-                                                    </span>
-                                                  )}
-                                                  <span className="text-muted-foreground text-sm flex items-center gap-1.5">
-                                                    <Clock size={14} />
-                                                    {format(parseISO(`2000-01-01T${deal.startTime}`), 'h:mm a')}
-                                                    {deal.endTime && ` - ${format(parseISO(`2000-01-01T${deal.endTime}`), 'h:mm a')}`}
-                                                  </span>
-                                                </div>
-                                                {deal.description && (
-                                                  <p className="text-muted-foreground text-sm line-clamp-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 hidden group-hover:block">
-                                                    {deal.description}
-                                                  </p>
-                                                )}
-                                              </div>
-                                            </div>
-                                          </Link>
-                                          <button
-                                            onClick={handleLikeClick}
-                                            className={`flex items-center gap-1 p-1.5 rounded-full transition-all flex-shrink-0 ${
-                                              liked 
-                                                ? 'text-red-500' 
-                                                : 'text-muted-foreground hover:text-red-500'
-                                            }`}
-                                            title={user ? (liked ? 'Unlike' : 'Like') : 'Sign in to like'}
-                                          >
-                                            <Heart 
-                                              size={16} 
-                                              className={liked ? 'fill-current' : ''} 
-                                            />
-                                            {likeCount > 0 && (
-                                              <span className="text-xs font-medium">
-                                                {likeCount}
-                                              </span>
-                                            )}
-                                          </button>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                ) : (
-                                  <div className="text-center py-6 bg-muted rounded-xl">
-                                    <Utensils size={24} className="mx-auto text-muted-foreground mb-2" />
-                                    <p className="text-muted-foreground text-sm">No specials</p>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="text-center py-16 bg-card border border-border rounded-2xl">
-                        <Heart size={64} className="mx-auto text-muted-foreground mb-4" />
-                        <h2 className="font-display text-2xl text-foreground mb-2">No Liked Events Found</h2>
-                        <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                          Try adjusting your date range filter or like some events.
+              {/* Saved specials */}
+              <div className="rounded-[25px] bg-[#f3f8fc] p-7 lg:w-[360px] lg:shrink-0">
+                <h2 className="pb-2 text-[22px] font-bold tracking-[-0.01em] text-navy">Saved Specials</h2>
+                {specialsCount === 0 ? (
+                  <p className="pt-4 text-[13px] text-ink-muted">No saved specials{dateWindow.kind === 'past' ? ' in the past' : ''}.</p>
+                ) : (
+                  <>
+                    {shownUpcoming.length > 0 && (
+                      <>
+                        <p className="pt-[30px] text-[12px] font-medium uppercase tracking-[0.14em] text-navy">
+                          — {dateWindow.kind === 'past' ? 'Past' : 'Upcoming'}
                         </p>
-                      </div>
+                        {shownUpcoming.map((s) => (
+                          <SavedSpecialRow
+                            key={s.id}
+                            event={s}
+                            when={`${format(parseISO(s.date), 'EEE, MMM d')}  ·  ${specialHours(s)}`}
+                            onUnsave={() => unsave(s.id)}
+                          />
+                        ))}
+                      </>
                     )}
-                  </div>
+                    {shownRecurring.length > 0 && (
+                      <>
+                        <p className="pt-[30px] text-[12px] font-medium uppercase tracking-[0.14em] text-navy">
+                          — Weekly recurring
+                        </p>
+                        {shownRecurring.map((s) => (
+                          <SavedSpecialRow
+                            key={s.seriesId ?? s.id}
+                            event={s}
+                            when={`${everyDaysLabel(s)}  ·  ${specialHours(s)}`}
+                            onUnsave={() => unsave(s.id)}
+                          />
+                        ))}
+                      </>
+                    )}
+                    {specialsCount > SPECIALS_PREVIEW && !showAllSpecials && (
+                      <button onClick={() => setShowAllSpecials(true)} className="link-arrow mt-4 text-[14px]">
+                        All {specialsCount} specials →
+                      </button>
+                    )}
+                  </>
                 )}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="mt-[78px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[15px] text-ink-muted">
+              Events and specials you&rsquo;ve sent in{hasVenueListings ? ', plus everything listed at your venues' : ''}. We review new
+              submissions within 24 hours.
+            </p>
+            <Link href="/submit" className="btn-sun self-start sm:self-auto">
+              + Submit new
+            </Link>
+          </div>
 
-                {/* Liked Events View */}
-                {likedView === 'events' && (
+          {loadingSubmissions ? (
+            <div className="flex justify-center py-16">
+              <Loader2 size={32} className="animate-spin text-navy" />
+            </div>
+          ) : submissions.length === 0 ? (
+            <div className="mt-8 rounded-[22px] bg-sky-soft px-6 py-14 text-center">
+              <p className="text-[24px] font-bold text-navy">No submissions yet</p>
+              <p className="mx-auto mt-3 max-w-[420px] text-[14px] text-ink-muted">
+                Share what&rsquo;s happening at your venue — submit your first event or special.
+              </p>
+              <Link href="/submit" className="btn-sun mt-6">
+                Submit an event →
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-6 flex flex-col gap-10 lg:flex-row lg:items-start lg:gap-[14px]">
+              <div className="flex min-w-0 flex-1 flex-col gap-[14px]">
+                <h2 className="text-[22px] font-bold tracking-[-0.01em] text-navy">Submitted Events</h2>
+                {submittedEventCards.length === 0 ? (
+                  <p className="text-[14px] text-ink-muted">No events submitted yet.</p>
+                ) : (
+                  submittedEventCards.map((s) => <SubmissionCard key={s.key} submission={s} />)
+                )}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-[14px] rounded-[25px] bg-[#f3f8fc] p-5 sm:p-7">
+                <h2 className="text-[22px] font-bold tracking-[-0.01em] text-navy">Submitted Specials</h2>
+                {submittedSpecialCards.length === 0 ? (
+                  <p className="text-[14px] text-ink-muted">No specials submitted yet.</p>
+                ) : (
                   <div>
-                    {regularEventDates.length > 0 ? (
-                      <div className="space-y-8">
-                        {regularEventDates.map((dateStr) => {
-                          const date = parseISO(dateStr);
-                          const eventsForDate = likedRegularEventsByDate[dateStr];
-                          const headingLabel = isToday(date) 
-                            ? 'Today' 
-                            : isTomorrow(date) 
-                              ? 'Tomorrow' 
-                              : format(date, 'EEEE, MMMM d');
-                          
-                          return (
-                            <div key={dateStr}>
-                              <div className="mb-3 pb-2 border-b border-border">
-                                <p className="text-primary font-medium text-sm uppercase tracking-wider">
-                                  {format(date, 'EEEE, MMMM d')}
-                                </p>
-                                <h3 className="font-display text-xl text-foreground">
-                                  {headingLabel}
-                                </h3>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                {eventsForDate.map((event) => (
-                                  <EventCard key={event.id} event={event} />
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-12 bg-card border border-border rounded-xl">
-                        <Calendar size={32} className="mx-auto text-muted-foreground mb-3" />
-                        <p className="text-muted-foreground">No liked events found</p>
-                      </div>
-                    )}
+                    {submittedSpecialCards.map((s) => (
+                      <SubmissionCard key={s.key} submission={s} variant="row" />
+                    ))}
                   </div>
                 )}
-
-                {/* Liked Specials View */}
-                {likedView === 'specials' && (
-                  <div>
-                    {specialDates.length > 0 ? (
-                      <div className="space-y-8">
-                        {specialDates.map((dateStr) => {
-                          const date = parseISO(dateStr);
-                          const dealsForDate = likedSpecialsByDate[dateStr];
-                          const headingLabel = isToday(date) 
-                            ? 'Today' 
-                            : isTomorrow(date) 
-                              ? 'Tomorrow' 
-                              : format(date, 'EEEE, MMMM d');
-                          
-                          return (
-                            <div key={dateStr}>
-                              <div className="mb-3 pb-2 border-b border-border">
-                                <p className="text-primary font-medium text-sm uppercase tracking-wider">
-                                  {format(date, 'EEEE, MMMM d')}
-                                </p>
-                                <h3 className="font-display text-xl text-foreground">
-                                  {headingLabel}
-                                </h3>
-                              </div>
-                              <div className="space-y-3">
-                                {dealsForDate.map((deal) => {
-                                  const liked = isLiked(deal.id);
-                                  const likeCount = getLikeCount(deal.id);
-                                  const handleLikeClick = (e: React.MouseEvent) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    if (!user) {
-                                      router.push('/login');
-                                      return;
-                                    }
-                                    toggleLike(deal.id);
-                                  };
-                                  return (
-                                    <div
-                                      key={deal.id}
-                                      className="group relative flex items-center gap-3 p-2 rounded-xl bg-muted/50 hover:bg-muted transition-all"
-                                    >
-                                      <Link
-                                        href={`/events/${deal.id}`}
-                                        className="flex items-center gap-3 flex-1 min-w-0"
-                                      >
-                                        <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                                          <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                                            <Utensils size={18} className="text-primary" />
-                                          </div>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <h5 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1 text-lg">
-                                            {deal.title}
-                                          </h5>
-                                          <div className="mt-1 min-h-[1.5rem]">
-                                            <div className="flex items-center gap-2 opacity-100 group-hover:opacity-0 group-hover:hidden transition-opacity duration-200">
-                                              {deal.price && (
-                                                <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-primary/10 text-primary font-semibold text-base">
-                                                  {deal.price}
-                                                </span>
-                                              )}
-                                              <span className="text-muted-foreground text-base flex items-center gap-1.5">
-                                                <Clock size={16} />
-                                                {format(parseISO(`2000-01-01T${deal.startTime}`), 'h:mm a')}
-                                                {deal.endTime && ` - ${format(parseISO(`2000-01-01T${deal.endTime}`), 'h:mm a')}`}
-                                              </span>
-                                            </div>
-                                            {deal.description && (
-                                              <p className="text-muted-foreground text-base line-clamp-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 hidden group-hover:block">
-                                                {deal.description}
-                                              </p>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </Link>
-                                      <button
-                                        onClick={handleLikeClick}
-                                        className={`flex items-center gap-1 p-1.5 rounded-full transition-all flex-shrink-0 ${
-                                          liked 
-                                            ? 'text-red-500' 
-                                            : 'text-muted-foreground hover:text-red-500'
-                                        }`}
-                                        title={user ? (liked ? 'Unlike' : 'Like') : 'Sign in to like'}
-                                      >
-                                        <Heart 
-                                          size={16} 
-                                          className={liked ? 'fill-current' : ''} 
-                                        />
-                                        {likeCount > 0 && (
-                                          <span className="text-xs font-medium">
-                                            {likeCount}
-                                          </span>
-                                        )}
-                                      </button>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-12 bg-card border border-border rounded-xl">
-                        <Utensils size={32} className="mx-auto text-muted-foreground mb-3" />
-                        <p className="text-muted-foreground">No liked specials found</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-              </>
-            ) : (
-              <div className="text-center py-16 bg-card border border-border rounded-2xl">
-                <Heart size={64} className="mx-auto text-muted-foreground mb-4" />
-                <h2 className="font-display text-2xl text-foreground mb-2">No Saved Events Yet</h2>
-                <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                  When you find events you&apos;re interested in, click the heart icon to save them here.
-                </p>
-                <Link
-                  href="/events"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-opacity"
-                >
-                  Browse Events
-                  <ArrowRight size={18} />
-                </Link>
               </div>
-            )}
-          </>
-        )}
-
-        {/* Submitted Events Tab */}
-        {activeTab === 'submitted' && (
-          <>
-            {loadingSubmissions ? (
-              <div className="text-center py-16">
-                <Loader2 size={32} className="animate-spin text-primary mx-auto" />
-              </div>
-            ) : submittedEvents.length > 0 ? (
-              <>
-                <div className="flex items-center justify-between mb-6">
-                  <p className="text-muted-foreground">
-                    {submittedEvents.length} submitted event{submittedEvents.length !== 1 ? 's' : ''}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => fetchSubmissions()}
-                      className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg font-medium hover:bg-muted transition-colors"
-                    >
-                      Refresh
-                    </button>
-                    <Link
-                      href="/submit"
-                      className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
-                    >
-                      Submit New Event
-                    </Link>
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  {groupedSubmissions.map((item) => {
-                    const isGroup = 'instances' in item;
-                    if (isGroup) {
-                      const group = item as EventGroup;
-                      const seriesKey = group.parentEvent.seriesId || group.parentEvent.id;
-                      const expanded = expandedGroups.has(seriesKey);
-                      const upcoming = group.instances.filter(i => i.date >= format(new Date(), 'yyyy-MM-dd'));
-                      const recurrenceLabel = getRecurrenceLabel({
-                        recurrencePattern: group.parentEvent.recurrencePattern,
-                        recurrenceDays: group.parentEvent.recurrenceDays,
-                        recurrenceDay: group.parentEvent.recurrenceDay,
-                      });
-                      return (
-                        <div key={seriesKey} className="bg-card border border-border rounded-xl overflow-hidden">
-                          <button
-                            onClick={() => toggleGroup(seriesKey)}
-                            className="w-full p-6 text-left hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex flex-wrap items-center gap-2 mb-1">
-                                  {getStatusBadge(group.parentEvent.status)}
-                                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                                    Recurring &middot; {recurrenceLabel}
-                                  </span>
-                                </div>
-                                <h3 className="font-display text-lg text-foreground">
-                                  {group.parentEvent.title}
-                                </h3>
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  {group.instances.length} occurrences &middot; {upcoming.length} upcoming
-                                </p>
-                              </div>
-                              {expanded ? <ChevronUp size={20} className="text-muted-foreground" /> : <ChevronDown size={20} className="text-muted-foreground" />}
-                            </div>
-                          </button>
-                          {expanded && (
-                            <div className="border-t border-border divide-y divide-border">
-                              {group.instances.map((inst) => (
-                                <SubmissionRow
-                                  key={inst.id}
-                                  event={inst}
-                                  isChild
-                                  getStatusBadge={getStatusBadge}
-                                  actionLoading={actionLoading}
-                                  onCancel={handleCancelEvent}
-                                  onDelete={handleDeleteEvent}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    }
-                    const event = item as SubmittedEvent;
-                    return (
-                      <SubmissionRow
-                        key={event.id}
-                        event={event}
-                        isChild={false}
-                        getStatusBadge={getStatusBadge}
-                        actionLoading={actionLoading}
-                        onCancel={handleCancelEvent}
-                        onDelete={handleDeleteEvent}
-                      />
-                    );
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-16 bg-card border border-border rounded-2xl">
-                <FileText size={64} className="mx-auto text-muted-foreground mb-4" />
-                <h2 className="font-display text-2xl text-foreground mb-2">No Submitted Events Yet</h2>
-                <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                  Share your events with Kingston&apos;s community. Submit your first event now!
-                </p>
-                <Link
-                  href="/submit"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-opacity"
-                >
-                  Submit an Event
-                  <ArrowRight size={18} />
-                </Link>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-function SubmissionRow({
-  event,
-  isChild,
-  getStatusBadge,
-  actionLoading,
-  onCancel,
-  onDelete,
-}: {
-  event: SubmittedEvent;
-  isChild: boolean;
-  getStatusBadge: (status: string) => React.ReactNode;
-  actionLoading: string | null;
-  onCancel: (id: string) => void;
-  onDelete: (event: SubmittedEvent) => void;
-}) {
-  const loading = actionLoading === event.id;
-  const isCancelled = event.status === 'cancelled';
+function SubmissionCard({ submission, variant = 'card' }: { submission: Submission; variant?: 'card' | 'row' }) {
+  const { event, status, untilDate } = submission;
+  const special = isSpecial(event);
+  const allDay = isAllDayEvent({ isAllDay: event.isAllDay, startTime: event.startTime });
+  const time = allDay ? 'All day' : formatTime(event.startTime);
+  const when = event.isRecurring
+    ? `${pluralDaysLabel(event)}  ·  ${time}`
+    : `${format(parseISO(event.date), 'EEE, MMM d')}  ·  ${time}`;
+  const href = status === 'approved' ? `/events/${event.id}` : event.fromVenue ? null : `/events/${event.id}/edit`;
+  const titleClass = 'text-[22px] font-bold leading-tight tracking-[-0.01em] text-navy';
 
   return (
-    <div className={`bg-card ${isChild ? '' : 'border border-border rounded-xl'} overflow-hidden`}>
-      <div className={`p-6 ${isChild ? 'pl-10' : ''}`}>
-        <div className="flex flex-col lg:flex-row lg:items-start gap-6">
-          <div className="relative w-full lg:w-40 h-28 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-            {event.imageUrl ? (
-              <SmartImage src={event.imageUrl} alt={event.title} sizes="(max-width: 1024px) 100vw, 160px" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
-                <Calendar size={28} className="text-muted-foreground" />
-              </div>
+    <div
+      className={`flex flex-wrap items-center gap-x-5 gap-y-3 p-5 sm:flex-nowrap ${
+        variant === 'card' ? 'rounded-[22px] border border-line bg-white' : 'border-b border-line last:border-b-0'
+      }`}
+    >
+      <div className="flex min-w-0 basis-full flex-col gap-1.5 sm:basis-auto sm:flex-1">
+        {href ? (
+          <Link href={href} className={`${titleClass} hover:underline`}>
+            {event.title}
+          </Link>
+        ) : (
+          <p className={titleClass}>{event.title}</p>
+        )}
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 whitespace-pre text-[14px] text-ink-muted">
+          <span>{when}</span>
+          <span className="flex items-center gap-1.5">
+            <MapPin size={14} className="text-link" />
+            {event.venue?.name}
+          </span>
+        </p>
+        {status === 'rejected' ? (
+          <div className="text-[13px] text-[#c25138]">
+            <p className="font-medium">Not approved — edit and resubmit</p>
+            {event.rejectionReason && (
+              <p className="mt-1 whitespace-pre-line rounded-[10px] bg-[#ffe1da] px-3 py-2 text-[#ad290c]">
+                <span className="font-bold">Note from our team:</span> {event.rejectionReason}
+              </p>
             )}
           </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              {getStatusBadge(event.status)}
-              {event.categories.slice(0, 2).map((cat) => (
-                <span
-                  key={cat}
-                  className={`px-2 py-0.5 rounded-full text-xs font-medium text-white ${categoryColors[cat as EventCategory]}`}
-                >
-                  {categoryLabels[cat as EventCategory]}
-                </span>
-              ))}
-              {!isChild && event.seriesId && event.isRecurring && (
-                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                  Recurring &middot;{' '}
-                  {getRecurrenceLabel({
-                    recurrencePattern: event.recurrencePattern,
-                    recurrenceDays: event.recurrenceDays,
-                    recurrenceDay: event.recurrenceDay,
-                  })}
-                </span>
-              )}
-            </div>
-            <h3 className="font-display text-lg text-foreground mb-1">{event.title}</h3>
-            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-2">
-              <span className="flex items-center gap-1">
-                <Calendar size={14} />
-                {format(parseISO(event.date), 'EEE, MMM d, yyyy')}
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock size={14} />
-                {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
-              </span>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Submitted {format(parseISO(event.createdAt), 'MMM d, yyyy \'at\' h:mm a')}
-            </p>
-          </div>
-
-          <div className="flex flex-shrink-0 items-center gap-2 flex-wrap">
-            {event.status === 'approved' && (
-              <Link
-                href={`/events/${event.id}`}
-                className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors text-sm"
-              >
-                View <ArrowRight size={14} />
-              </Link>
-            )}
-            {!isCancelled && event.status !== 'rejected' && (
-              <Link
-                href={`/events/${event.id}/edit`}
-                className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg hover:bg-muted transition-colors text-sm text-muted-foreground"
-              >
-                <Edit size={14} /> Edit
-              </Link>
-            )}
-            {!isCancelled && event.status !== 'rejected' && (
-              <button
-                onClick={() => onCancel(event.id)}
-                disabled={loading}
-                className="flex items-center gap-1.5 px-3 py-2 border border-amber-200 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors text-sm disabled:opacity-50"
-              >
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />} Cancel
-              </button>
-            )}
-            <button
-              onClick={() => onDelete(event)}
-              disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Delete
-            </button>
-          </div>
-        </div>
+        ) : event.isRecurring && untilDate ? (
+          <p className="text-[13px] font-medium text-link">
+            Recurring {special ? 'special' : 'event'} · Until {format(parseISO(untilDate), 'MMM d, yyyy')}
+          </p>
+        ) : null}
       </div>
+      {event.fromVenue && (
+        <span className="tag shrink-0 bg-sky px-3 py-1.5 text-navy" title="Submitted by someone else at your venue">
+          From your venue
+        </span>
+      )}
+      <StatusPill status={status} />
+      {status !== 'cancelled' && !event.fromVenue && (
+        <Link
+          href={`/events/${event.id}/edit`}
+          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-navy px-4 text-[14px] font-medium text-navy transition-colors hover:bg-navy hover:text-white"
+        >
+          <Pencil size={15} /> Edit
+        </Link>
+      )}
     </div>
+  );
+}
+
+export default function MyEventsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <Loader2 size={32} className="animate-spin text-navy" />
+        </div>
+      }
+    >
+      <MyEventsContent />
+    </Suspense>
   );
 }

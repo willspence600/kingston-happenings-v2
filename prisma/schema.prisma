@@ -24,7 +24,19 @@ model Venue {
   imageUrl      String?
   coverImageUrl String?
   status        String   @default("approved") // pending, approved, rejected
-  promotionTier String   @default("standard") // standard, promoted, featured
+  promotionTier String   @default("standard") // Legacy single tier, kept in sync with eventPromotionTier
+  eventPromotionTier   String @default("standard") // standard, boosted, promoted, featured (applies to events)
+  specialPromotionTier String @default("standard") // standard, boosted, promoted, featured (applies to food & drink specials)
+  isMajor       Boolean  @default(false) // Major Venues are the only ones listed on Coming Up
+  isDowntownDistrict Boolean @default(false) // Part of the Downtown Kingston business district (shows the DK logo)
+  // Details organizers fill in on sign-up (shown on the venue page)
+  venueTypes         String[] @default([]) // e.g. "Restaurant", "Bar / pub", or a custom type typed under "Other"
+  phone              String?
+  instagram          String?
+  about              String?
+  hours              Json? // { Mon: { open: "11:00", close: "23:00", closed: false }, ... }
+  accessibility      String[] @default([])
+  accessibilityNotes String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -51,6 +63,8 @@ model EventSeries {
   venueId           String
   venue             Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
   submittedById     String?
+  rejectionReason   String? // Admin's note to the submitter when the series is rejected
+  hiddenFromPromotion Boolean @default(false) // Listed at Standard regardless of the venue's tier
   categories        EventSeriesCategory[]
   occurrences       Event[]
   createdAt         DateTime @default(now())
@@ -85,6 +99,10 @@ model Event {
   seriesId            String?
   series              EventSeries? @relation(fields: [seriesId], references: [id], onDelete: Cascade)
   detachedFromSeries  Boolean      @default(false)
+
+  lastEditedAt DateTime? // Set when the submitter (or an admin) edits the listing
+  rejectionReason     String? // Admin's note to the submitter when the listing is rejected
+  hiddenFromPromotion Boolean @default(false) // Listed at Standard regardless of the venue's tier
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -121,4 +139,18 @@ model Like {
   eventId String
 
   @@unique([userId, eventId])
+}
+
+// Admin-editable site content (terms, privacy policy, sign-up email options), keyed by name
+model SiteSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// Emails collected from the footer "Subscribe" form
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
 }

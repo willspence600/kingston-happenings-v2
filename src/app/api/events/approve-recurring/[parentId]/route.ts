@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 
+/** Approving a listing also approves its venue if that's still waiting */
+async function approveVenueOf(eventId: string) {
+  const event = await prisma.event.findUnique({ where: { id: eventId }, select: { venueId: true } });
+  if (event) {
+    await prisma.venue.updateMany({ where: { id: event.venueId, status: { not: 'approved' } }, data: { status: 'approved' } });
+  }
+}
+
 /**
  * Approve all pending occurrences in a series.
  * Param `parentId` is treated as seriesId (or an event id whose seriesId is used).
@@ -30,8 +38,9 @@ export async function POST(
         // Fall back to approving just this single event
         const result = await prisma.event.updateMany({
           where: { id: parentId, status: 'pending' },
-          data: { status: 'approved' },
+          data: { status: 'approved', rejectionReason: null },
         });
+        await approveVenueOf(parentId);
         return NextResponse.json({ success: true, count: result.count });
       }
       seriesId = event.seriesId;
@@ -42,13 +51,15 @@ export async function POST(
         seriesId,
         status: 'pending',
       },
-      data: { status: 'approved' },
+      data: { status: 'approved', rejectionReason: null },
     });
 
-    await prisma.eventSeries.update({
+    const approvedSeries = await prisma.eventSeries.update({
       where: { id: seriesId },
-      data: { status: 'approved' },
+      data: { status: 'approved', rejectionReason: null },
+      select: { venueId: true },
     });
+    await prisma.venue.updateMany({ where: { id: approvedSeries.venueId, status: { not: 'approved' } }, data: { status: 'approved' } });
 
     return NextResponse.json({ success: true, count: result.count });
   } catch (error) {

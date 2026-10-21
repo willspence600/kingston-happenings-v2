@@ -1,25 +1,30 @@
 'use client';
 
-import { use, useMemo } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, MapPin, ExternalLink, Navigation, Calendar, Heart, Tag, Repeat, Clock } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { Accessibility, ArrowLeft, AtSign, Check, Clock, Globe, Loader2, MapPin, Navigation, Pencil, Phone, Shield, Users } from 'lucide-react';
+import { format, parseISO, isToday, isTomorrow } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
-import { EventCard } from '@/components';
-import SmartImage from '@/components/ui/SmartImage';
 import type { Event } from '@/types/event';
-import { formatPrice } from '@/utils/price';
 import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
+import { normalizeUrl } from '@/utils/formatting';
+import { TimeCard, isDowntown, specialHoursLabel } from '@/components/brand';
+import { VenueDetailsEditor, venueDetailsDraft, venueDetailsPayload, type VenueDetailsDraft } from '@/components/venues';
+import { WEEK_DAYS, formatHourLabel } from '@/constants/venueDetails';
+import { useAuth } from '@/contexts/AuthContext';
+
+interface VenueOrganizers {
+  count: number;
+  canSeeOrganizers: boolean;
+  canEdit: boolean;
+  organizers?: { id: string; name: string; email: string; role: string | null; isVerifiedOrganizer: boolean }[];
+}
 
 /** Collapse recurring occurrences into one representative item per series */
 function groupBySeries(events: Event[]): Event[] {
   const seenSeries = new Set<string>();
   const result: Event[] = [];
-
-  // Prefer soonest upcoming occurrence as the representative
   const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-
   for (const event of sorted) {
     if (event.seriesId) {
       if (seenSeries.has(event.seriesId)) continue;
@@ -30,275 +35,387 @@ function groupBySeries(events: Event[]): Event[] {
   return result;
 }
 
-function formatEventTime(event: Event): string {
-  const isAllDay = event.isAllDay || event.startTime === '00:00';
-  if (isAllDay) return 'All Day';
-  const start = format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
-  if (event.endTime) {
-    return `${start} – ${format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')}`;
-  }
-  return start;
+function whenLabel(event: Event) {
+  const d = parseISO(event.date);
+  const day = isToday(d) ? 'Tonight' : isTomorrow(d) ? 'Tomorrow' : format(d, 'EEE, MMM d');
+  return day;
 }
 
 export default function VenueDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
-  const { getVenueById, getEventsByVenue } = useEvents();
-  
+  const { getVenueById, getEventsByVenue, isLoading, refreshVenues } = useEvents();
+  const { user, isAdmin } = useAuth();
+  const [organizers, setOrganizers] = useState<VenueOrganizers | null>(null);
+  const [editing, setEditing] = useState<VenueDetailsDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    fetch(`/api/venues/${id}/organizers`)
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then((data) => {
+        if (!cancelled) setOrganizers(data);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, user]);
+
   const venue = getVenueById(id);
   const venueEvents = venue ? getEventsByVenue(venue.id) : [];
   const today = format(new Date(), 'yyyy-MM-dd');
-  const upcomingEvents = venueEvents.filter((e) => e.date >= today);
-  const pastEvents = venueEvents.filter((e) => e.date < today);
 
-  const upcomingDeals = useMemo(
-    () => groupBySeries(upcomingEvents.filter(e => e.categories.includes('food-deal'))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [venueEvents, today]
-  );
   const upcomingRegularEvents = useMemo(
-    () => groupBySeries(upcomingEvents.filter(e => !e.categories.includes('food-deal'))),
+    () => groupBySeries(venueEvents.filter((e) => e.date >= today && !e.categories.includes('food-deal'))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [venueEvents, today]
+    [venueEvents.length, today]
   );
+  const upcomingDeals = useMemo(
+    () => groupBySeries(venueEvents.filter((e) => e.date >= today && e.categories.includes('food-deal'))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [venueEvents.length, today]
+  );
+  const pastEvents = venueEvents
+    .filter((e) => e.date < today && !e.categories.includes('food-deal'))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 5);
 
   if (!venue) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="font-display text-3xl text-foreground mb-4">Venue Not Found</h1>
-          <p className="text-muted-foreground mb-6">The venue you&apos;re looking for doesn&apos;t exist.</p>
-          <Link
-            href="/venues"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg"
-          >
-            <ArrowLeft size={18} />
-            Back to Venues
-          </Link>
+    if (isLoading) {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <Loader2 size={32} className="animate-spin text-navy" />
         </div>
+      );
+    }
+    return (
+      <div className="page-container flex min-h-[60vh] flex-col items-start justify-center gap-4 py-24">
+        <p className="eyebrow">— Venues</p>
+        <h1 className="display-section">Venue not found</h1>
+        <p className="text-ink-muted">The venue you&rsquo;re looking for doesn&rsquo;t exist.</p>
+        <Link href="/venues" className="btn-sun mt-2">
+          All venues →
+        </Link>
       </div>
     );
   }
 
+  const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(`${venue.name}, ${venue.address}`)}`;
+  const venueTypes = venue.venueTypes || [];
+  const hours = venue.hours && Object.keys(venue.hours).length > 0 ? venue.hours : null;
+  const accessibility = venue.accessibility || [];
+  const canEdit = !!user && !!organizers?.canEdit;
+
+  const handleSaveDetails = async () => {
+    if (!editing) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      const res = await fetch(`/api/venues/${venue.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(venueDetailsPayload(editing)),
+      });
+      if (!res.ok) throw new Error();
+      await refreshVenues();
+      setEditing(null);
+    } catch {
+      setSaveError('Could not save the venue details. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen">
+    <div>
       {/* Hero */}
-      <section className="relative bg-gradient-to-br from-secondary to-primary/80 text-white py-16 sm:py-24 overflow-hidden">
-        {venue.coverImageUrl ? (
-          <>
-            <SmartImage
-              src={venue.coverImageUrl}
-              alt={venue.name}
-              sizes="100vw"
-              className="absolute inset-0 object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-br from-secondary/80 to-primary/70" />
-          </>
-        ) : (
-          <div className="absolute inset-0 pattern-bg opacity-10" />
-        )}
-        
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-2 text-white/80 hover:text-white mb-6 transition-colors"
-          >
-            <ArrowLeft size={18} />
-            Back
-          </button>
-
-          <div className="flex items-start gap-4">
-            <div className="w-16 h-16 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
-              {venue.imageUrl ? (
-                <SmartImage src={venue.imageUrl} alt={venue.name} sizes="64px" className="object-cover" />
-              ) : (
-                <MapPin size={32} />
+      <section className="bg-navy text-white">
+        <div className="page-container pb-10 pt-6">
+          <Link href="/venues" className="inline-flex items-center gap-2 text-[13px] font-medium text-white hover:underline">
+            <ArrowLeft size={16} />
+            All venues
+          </Link>
+          <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex items-end gap-5">
+              {venue.imageUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={venue.imageUrl} alt={`${venue.name} logo`} className="hidden h-24 w-24 shrink-0 rounded-[18px] bg-white object-contain p-2 sm:block" />
               )}
+              <div>
+                {venueTypes.length > 0 ? (
+                  <p className="eyebrow !text-sun">— {venueTypes.join(' · ')}</p>
+                ) : (
+                  venue.neighborhood && <p className="eyebrow !text-sun">— {isDowntown(venue) ? 'Downtown Kingston' : venue.neighborhood}</p>
+                )}
+                <h1 className="display-section !text-white mt-3 max-w-[820px]">{venue.name}</h1>
+              </div>
             </div>
-            <div>
-              <h1 className="font-display text-4xl sm:text-5xl mb-2">{venue.name}</h1>
-              <p className="text-white/80 text-lg">{venue.address}</p>
-              {venue.neighborhood && (
-                <span className="inline-block mt-2 px-3 py-1 bg-white/10 rounded-full text-sm">
-                  {venue.neighborhood}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-4 mt-8">
-            <a
-              href={`https://maps.google.com/?q=${encodeURIComponent(venue.address)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-4 py-2 bg-white text-secondary rounded-lg font-medium hover:bg-white/90 transition-colors"
-            >
-              <Navigation size={16} />
-              Get Directions
-            </a>
-            {venue.website && (
-              <a
-                href={venue.website}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 rounded-lg font-medium hover:bg-white/20 transition-colors"
-              >
-                <ExternalLink size={16} />
-                Visit Website
+            <div className="flex flex-col items-start gap-3 lg:items-end">
+              <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[14px] hover:underline">
+                <MapPin size={15} className="text-sun" />
+                {venue.address}
               </a>
-            )}
+              <div className="flex flex-wrap gap-2">
+                {venue.website && (
+                  <a
+                    href={normalizeUrl(venue.website)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn border-[1.5px] border-white text-white font-medium hover:bg-white hover:text-navy h-10"
+                  >
+                    <Globe size={15} />
+                    Visit website
+                  </a>
+                )}
+                {isAdmin && (
+                  <Link href={`/admin/venues/${venue.id}`} className="btn-sun h-10">
+                    <Shield size={15} />
+                    Admin edit
+                  </Link>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Venue Stats Overview */}
-        <section className="mb-12 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-card border border-border rounded-xl p-4 text-center">
-            <Calendar size={24} className="mx-auto text-primary mb-2" />
-            <p className="text-2xl font-display text-foreground">{upcomingRegularEvents.length}</p>
-            <p className="text-sm text-muted-foreground">Upcoming Events</p>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-4 text-center">
-            <Tag size={24} className="mx-auto text-amber-500 mb-2" />
-            <p className="text-2xl font-display text-foreground">{upcomingDeals.length}</p>
-            <p className="text-sm text-muted-foreground">Active Specials</p>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-4 text-center">
-            <Heart size={24} className="mx-auto text-red-500 mb-2" />
-            <p className="text-2xl font-display text-foreground">{venueEvents.reduce((sum, e) => sum + (e.likeCount || 0), 0)}</p>
-            <p className="text-sm text-muted-foreground">Total Likes</p>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-4 text-center">
-            <Calendar size={24} className="mx-auto text-muted-foreground mb-2" />
-            <p className="text-2xl font-display text-foreground">{pastEvents.length}</p>
-            <p className="text-sm text-muted-foreground">Past Events</p>
-          </div>
-        </section>
-
-        {/* Upcoming Events and Food & Drink Specials - Side by Side */}
-        <section className="mb-12">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Upcoming Events Column */}
-            <div>
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="font-display text-2xl sm:text-3xl text-foreground">
-                  Upcoming Events
-                </h2>
-                <span className="text-muted-foreground">
-                  {upcomingRegularEvents.length} event{upcomingRegularEvents.length !== 1 ? 's' : ''}
-                </span>
+      <div className="page-container pb-24 pt-10">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
+          {/* Upcoming events */}
+          <div className="min-w-0">
+            {editing ? (
+              <div className="card mb-10 p-5 sm:p-7">
+                <p className="text-[20px] font-bold text-navy">Edit venue details</p>
+                <div className="mt-5">
+                  <VenueDetailsEditor value={editing} onChange={setEditing} />
+                </div>
+                {saveError && <p className="mt-4 text-[14px] text-danger">{saveError}</p>}
+                <div className="mt-6 flex gap-3">
+                  <button type="button" onClick={handleSaveDetails} disabled={saving} className="btn-sun">
+                    {saving && <Loader2 size={15} className="animate-spin" />}
+                    Save changes
+                  </button>
+                  <button type="button" onClick={() => setEditing(null)} className="btn-ghost">
+                    Cancel
+                  </button>
+                </div>
               </div>
+            ) : (
+              (venue.about || canEdit) && (
+                <div className="mb-10">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="eyebrow-sm">About</p>
+                    {canEdit && (
+                      <button type="button" onClick={() => setEditing(venueDetailsDraft(venue))} className="flex items-center gap-1.5 text-[13px] font-medium text-link hover:underline">
+                        <Pencil size={13} /> Edit venue details
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-3 max-w-[680px] whitespace-pre-line text-[16px] leading-[1.6] text-navy">
+                    {venue.about || <span className="text-ink-muted">Add a sentence or two about what it&rsquo;s like.</span>}
+                  </p>
+                </div>
+              )
+            )}
+            <p className="eyebrow-sm">Upcoming events</p>
+            {upcomingRegularEvents.length > 0 ? (
+              <div className="mt-3 flex flex-col gap-3">
+                {upcomingRegularEvents.slice(0, 8).map((event) => (
+                  <TimeCard
+                    key={event.seriesId || event.id}
+                    event={event}
+                    subtitle={`${
+                      event.isRecurring
+                        ? getRecurrenceLabel({
+                            recurrencePattern: event.recurrencePattern,
+                            recurrenceDays: event.recurrenceDays,
+                            recurrenceDay: event.recurrenceDay,
+                          })
+                        : whenLabel(event)
+                    } · ${venue.name}`}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="card mt-3 p-8">
+                <p className="text-[20px] font-bold text-navy">No upcoming events</p>
+                <p className="mt-1 text-[14px] text-ink-muted">Check back soon for new events at {venue.name}.</p>
+              </div>
+            )}
+          </div>
 
-              {upcomingRegularEvents.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {upcomingRegularEvents.map((event) => (
-                    <EventCard key={event.seriesId || event.id} event={event} />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-12 bg-muted rounded-2xl">
-                  <Calendar size={48} className="mx-auto text-muted-foreground mb-4" />
-                  <h3 className="font-display text-xl text-foreground mb-2">No Upcoming Events</h3>
-                  <p className="text-muted-foreground">Check back soon for new events at this venue.</p>
-                </div>
-              )}
+          <div className="flex flex-col gap-8">
+            {/* Specials */}
+            <div>
+              <p className="eyebrow-sm">Food &amp; drink specials</p>
+              <div className="mt-3 rounded-[22px] bg-sky px-6 py-2">
+                {upcomingDeals.length > 0 ? (
+                  upcomingDeals.slice(0, 6).map((deal) => (
+                    <Link
+                      key={deal.seriesId || deal.id}
+                      href={`/events/${deal.id}`}
+                      className="group block border-b border-navy py-4 last:border-b-0"
+                    >
+                      <p className="text-[20px] font-bold leading-tight text-navy group-hover:underline">{deal.title}</p>
+                      <p className="mt-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-navy">
+                        <Clock size={12} />
+                        {deal.isRecurring
+                          ? `${getRecurrenceLabel({
+                              recurrencePattern: deal.recurrencePattern,
+                              recurrenceDays: deal.recurrenceDays,
+                              recurrenceDay: deal.recurrenceDay,
+                            }).replace(/^Every /, '')} · `
+                          : `${format(parseISO(deal.date), 'EEE, MMM d')} · `}
+                        {specialHoursLabel(deal)}
+                      </p>
+                    </Link>
+                  ))
+                ) : (
+                  <p className="py-4 text-[14px] text-ink-muted">No specials listed right now.</p>
+                )}
+              </div>
             </div>
 
-            {/* Food & Drink Specials Column */}
+            {/* Visit */}
             <div>
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="font-display text-2xl sm:text-3xl text-foreground">
-                  Food & Drink Specials
-                </h2>
-                <span className="text-muted-foreground">
-                  {upcomingDeals.length} special{upcomingDeals.length !== 1 ? 's' : ''}
-                </span>
+              <p className="eyebrow-sm">Visit</p>
+              <div className="card mt-3 flex flex-col gap-4 p-5">
+                <div className="flex gap-3">
+                  <MapPin size={16} className="mt-0.5 text-link" />
+                  <div>
+                    <p className="text-[14px] font-medium text-navy">{venue.address}</p>
+                    {venue.neighborhood && <p className="text-[12px] text-ink-muted">{venue.neighborhood}</p>}
+                  </div>
+                </div>
+                {venue.phone && (
+                  <div className="flex gap-3">
+                    <Phone size={16} className="mt-0.5 text-link" />
+                    <a href={`tel:${venue.phone.replace(/[^\d+]/g, '')}`} className="text-[14px] font-medium text-navy hover:underline">
+                      {venue.phone}
+                    </a>
+                  </div>
+                )}
+                {venue.instagram && (
+                  <div className="flex gap-3">
+                    <AtSign size={16} className="mt-0.5 text-link" />
+                    <a
+                      href={`https://instagram.com/${venue.instagram}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="truncate text-[14px] font-medium text-navy hover:underline"
+                    >
+                      {venue.instagram}
+                    </a>
+                  </div>
+                )}
+                {venue.website && (
+                  <div className="flex gap-3">
+                    <Globe size={16} className="mt-0.5 text-link" />
+                    <a
+                      href={normalizeUrl(venue.website)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="truncate text-[14px] font-medium text-navy hover:underline"
+                    >
+                      {venue.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                    </a>
+                  </div>
+                )}
+                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn-outline btn-sm self-start">
+                  <Navigation size={14} />
+                  Get directions
+                </a>
               </div>
+            </div>
 
-              {upcomingDeals.length > 0 ? (
-                <div className="space-y-4">
-                  {upcomingDeals.map((event) => {
-                    const price = formatPrice(event.price);
-                    const timeLabel = formatEventTime(event);
-                    const recurrenceLabel = event.isRecurring
-                      ? getRecurrenceLabel({
-                          recurrencePattern: event.recurrencePattern,
-                          recurrenceDays: event.recurrenceDays,
-                          recurrenceDay: event.recurrenceDay,
-                        })
-                      : null;
-
+            {/* Opening hours */}
+            {hours && (
+              <div>
+                <p className="eyebrow-sm">Opening hours</p>
+                <div className="card mt-3 px-5 py-2">
+                  {WEEK_DAYS.filter((d) => hours[d]).map((d) => {
+                    const h = hours[d];
                     return (
-                      <Link
-                        key={event.seriesId || event.id}
-                        href={`/events/${event.id}`}
-                        className="block group bg-card border border-border rounded-xl p-4 hover:border-primary/50 transition-all hover:shadow-md"
-                      >
-                        <div className="flex gap-4">
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-lg text-foreground group-hover:text-primary transition-colors line-clamp-1 mb-1">
-                              {event.title}
-                            </h3>
-                            {event.description && (
-                              <p className="text-muted-foreground text-sm line-clamp-2 mb-2">
-                                {event.description}
-                              </p>
-                            )}
-                            <div className="flex flex-wrap items-center gap-3">
-                              {price && (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold text-sm">
-                                  {price}
-                                </span>
-                              )}
-                              {recurrenceLabel ? (
-                                <span className="text-primary text-sm flex items-center gap-1">
-                                  <Repeat size={14} />
-                                  {recurrenceLabel}
-                                  <span className="text-muted-foreground">
-                                    · next {format(parseISO(event.date), 'MMM d')}
-                                  </span>
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground text-sm flex items-center gap-1">
-                                  <Calendar size={14} />
-                                  {format(parseISO(event.date), 'MMM d')}
-                                </span>
-                              )}
-                              <span className="text-muted-foreground text-sm flex items-center gap-1">
-                                <Clock size={14} />
-                                {timeLabel}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
+                      <div key={d} className="flex items-center justify-between border-b border-line py-2.5 text-[14px] last:border-b-0">
+                        <span className="font-medium text-navy">{d}</span>
+                        <span className={h.closed || !h.open ? 'text-ink-muted' : 'text-navy'}>
+                          {h.closed || !h.open ? 'Closed' : `${formatHourLabel(h.open)} – ${formatHourLabel(h.close)}`}
+                        </span>
+                      </div>
                     );
                   })}
                 </div>
-              ) : (
-                <div className="text-center py-12 bg-muted rounded-2xl">
-                  <Tag size={48} className="mx-auto text-muted-foreground mb-4" />
-                  <h3 className="font-display text-xl text-foreground mb-2">No Active Specials</h3>
-                  <p className="text-muted-foreground">Check back soon for new specials at this venue.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
+              </div>
+            )}
 
-        {/* Past Events */}
+            {/* Accessibility */}
+            {(accessibility.length > 0 || venue.accessibilityNotes) && (
+              <div>
+                <p className="eyebrow-sm">Accessibility</p>
+                <div className="card mt-3 flex flex-col gap-3 p-5">
+                  {accessibility.map((a) => (
+                    <p key={a} className="flex items-center gap-2.5 text-[14px] text-navy">
+                      <Check size={15} className="shrink-0 text-link" strokeWidth={2.5} />
+                      {a}
+                    </p>
+                  ))}
+                  {venue.accessibilityNotes && (
+                    <p className="flex gap-2.5 text-[13px] leading-[1.5] text-ink-muted">
+                      <Accessibility size={15} className="mt-0.5 shrink-0 text-link" />
+                      {venue.accessibilityNotes}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Organizers associated with the venue (visible to them and admins) */}
+            {organizers?.canSeeOrganizers && organizers.organizers && (
+              <div>
+                <p className="eyebrow-sm">Organizers</p>
+                <div className="card mt-3 flex flex-col gap-3 p-5">
+                  {organizers.organizers.length === 0 ? (
+                    <p className="text-[14px] text-ink-muted">No organizers are associated with this venue yet.</p>
+                  ) : (
+                    organizers.organizers.map((o) => (
+                      <div key={o.id} className="flex items-start gap-3">
+                        <Users size={16} className="mt-0.5 shrink-0 text-link" />
+                        <div className="min-w-0">
+                          <p className="text-[14px] font-bold text-navy">
+                            {o.name}
+                            {o.id === user?.id && <span className="font-normal text-ink-muted"> (you)</span>}
+                          </p>
+                          <p className="truncate text-[12px] text-ink-muted">
+                            {[o.role, o.isVerifiedOrganizer ? 'Verified Organizer' : null].filter(Boolean).join(' · ')}
+                          </p>
+                          <a href={`mailto:${o.email}`} className="truncate text-[12px] text-link hover:underline">
+                            {o.email}
+                          </a>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {pastEvents.length > 0 && (
-          <section>
-            <h2 className="font-display text-2xl text-foreground mb-6">
-              Past Events
-            </h2>
-            <div className="space-y-3 opacity-75">
-              {pastEvents.slice(0, 5).map((event) => (
-                <EventCard key={event.id} event={event} variant="compact" />
+          <div className="mt-14">
+            <p className="eyebrow-sm">Past events</p>
+            <div className="mt-3 border-t border-line">
+              {pastEvents.map((e) => (
+                <Link key={e.id} href={`/events/${e.id}`} className="group flex items-center gap-6 border-b border-line py-4">
+                  <span className="w-[110px] shrink-0 text-[13px] text-ink-muted">{format(parseISO(e.date), 'EEE, MMM d')}</span>
+                  <span className="truncate text-[15px] font-medium text-navy group-hover:underline">{e.title}</span>
+                </Link>
               ))}
             </div>
-          </section>
+          </div>
         )}
       </div>
     </div>

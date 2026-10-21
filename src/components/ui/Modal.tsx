@@ -71,11 +71,11 @@ export default function Modal({
   const getConfirmButtonStyle = () => {
     switch (type) {
       case 'warning':
-        return 'bg-red-600 hover:bg-red-700 text-white';
+        return 'bg-danger hover:opacity-90 text-white';
       case 'success':
-        return 'bg-green-600 hover:bg-green-700 text-white';
+        return 'bg-navy hover:opacity-90 text-white';
       default:
-        return 'bg-primary hover:opacity-90 text-primary-foreground';
+        return 'bg-sun hover:opacity-90 text-navy';
     }
   };
 
@@ -89,7 +89,7 @@ export default function Modal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-navy/50 backdrop-blur-sm z-50"
           />
           
           {/* Modal */}
@@ -99,14 +99,14 @@ export default function Modal({
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md mx-4"
           >
-            <div className="bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+            <div className="bg-card border border-border rounded-[22px] shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-start gap-4 p-6 pb-4">
                 <div className="flex-shrink-0 w-12 h-12 rounded-full bg-muted flex items-center justify-center">
                   {getIcon()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-display text-lg text-foreground">{title}</h3>
+                  <h3 className="text-lg font-bold text-navy">{title}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">{message}</p>
                 </div>
                 <button
@@ -124,19 +124,19 @@ export default function Modal({
                     <>
                       <button
                         onClick={handleConfirm}
-                        className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors"
+                        className="flex-1 px-4 py-2.5 border border-border rounded-full font-bold text-sm hover:bg-muted transition-colors"
                       >
                         {confirmText}
                       </button>
                       <button
                         onClick={handleSecondaryConfirm}
-                        className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${getConfirmButtonStyle()}`}
+                        className={`flex-1 px-4 py-2.5 rounded-full font-bold text-sm transition-colors ${getConfirmButtonStyle()}`}
                       >
                         {secondaryConfirmText}
                       </button>
                       <button
                         onClick={onClose}
-                        className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors sm:w-full"
+                        className="flex-1 px-4 py-2.5 border border-border rounded-full font-bold text-sm hover:bg-muted transition-colors sm:w-full"
                       >
                         {cancelText}
                       </button>
@@ -145,13 +145,13 @@ export default function Modal({
                     <>
                       <button
                         onClick={onClose}
-                        className="flex-1 px-4 py-2.5 border border-border rounded-xl font-medium text-sm hover:bg-muted transition-colors"
+                        className="flex-1 px-4 py-2.5 border border-border rounded-full font-bold text-sm hover:bg-muted transition-colors"
                       >
                         {cancelText}
                       </button>
                       <button
                         onClick={handleConfirm}
-                        className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${getConfirmButtonStyle()}`}
+                        className={`flex-1 px-4 py-2.5 rounded-full font-bold text-sm transition-colors ${getConfirmButtonStyle()}`}
                       >
                         {confirmText}
                       </button>
@@ -160,7 +160,7 @@ export default function Modal({
                 ) : (
                   <button
                     onClick={onClose}
-                    className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${getConfirmButtonStyle()}`}
+                    className={`flex-1 px-4 py-2.5 rounded-full font-bold text-sm transition-colors ${getConfirmButtonStyle()}`}
                   >
                     {confirmText}
                   </button>

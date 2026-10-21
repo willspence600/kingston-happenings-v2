@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 
 /**
- * Reject (delete) all pending occurrences in a series.
+ * Reject all pending occurrences in a series.
  * Param `parentId` is treated as seriesId (or an event id whose seriesId is used).
  */
 export async function POST(
@@ -17,6 +17,8 @@ export async function POST(
     }
 
     const { parentId } = await params;
+    const body = await request.json().catch(() => ({}));
+    const reason = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 1000) : null;
 
     let seriesId = parentId;
     const series = await prisma.eventSeries.findUnique({ where: { id: parentId } });
@@ -26,18 +28,26 @@ export async function POST(
         select: { seriesId: true },
       });
       if (!event?.seriesId) {
-        const result = await prisma.event.deleteMany({
+        const result = await prisma.event.updateMany({
           where: { id: parentId, status: 'pending' },
+          data: { status: 'rejected', rejectionReason: reason },
         });
         return NextResponse.json({ success: true, count: result.count });
       }
       seriesId = event.seriesId;
     }
 
-    // Deleting the series cascades to all occurrences
-    await prisma.eventSeries.delete({ where: { id: seriesId } });
+    // Keep the series (marked rejected) so the submitter sees the admin's note under My Submissions
+    const result = await prisma.event.updateMany({
+      where: { seriesId, status: 'pending' },
+      data: { status: 'rejected', rejectionReason: reason },
+    });
+    await prisma.eventSeries.update({
+      where: { id: seriesId },
+      data: { status: 'rejected', rejectionReason: reason },
+    });
 
-    return NextResponse.json({ success: true, count: 1, deletedSeries: true });
+    return NextResponse.json({ success: true, count: result.count });
   } catch (error) {
     console.error('Reject recurring events error:', error);
     return NextResponse.json({ error: 'Failed to reject events' }, { status: 500 });

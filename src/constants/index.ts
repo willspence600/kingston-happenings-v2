@@ -4,3 +4,4 @@
 
 export * from './categories';
 
+export * from './venueDetails';

@@ -18,6 +18,8 @@ export {
   categoryColors,
   categoryColorsMuted,
   categoryColorsActive,
+  categoryTagStyles,
+  categoryDotColors,
   browseCategories,
   allCategories,
 } from './event';

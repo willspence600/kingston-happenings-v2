@@ -1,296 +1,780 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect, Suspense, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { 
-  Calendar, 
-  Clock, 
-  MapPin, 
-  FileText, 
-  Tag, 
-  DollarSign,
+import { useSearchParams } from 'next/navigation';
+import {
+  Calendar,
+  CalendarDays,
+  Clock,
+  MapPin,
   Upload,
   Link as LinkIcon,
-  Send,
-  CheckCircle,
-  Info,
+  Check,
   AlertCircle,
   Loader2,
-  Plus,
   X,
-  LogIn,
-  Repeat,
-  Utensils
+  Lock,
+  Utensils,
+  Building2,
+  ChevronUp,
+  ChevronDown,
+  Pencil,
+  ShieldCheck,
 } from 'lucide-react';
-import { categoryLabels, EventCategory, browseCategories } from '@/types/event';
+import type { Event, EventCategory, Venue } from '@/types/event';
+import {
+  categoryLabels,
+  categoryTagStyles,
+  eventCategoryOptions,
+  specialConditionCategories,
+} from '@/constants/categories';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
+import { useOrganizerVerification } from '@/hooks/useOrganizerVerification';
+import { supabase } from '@/lib/supabaseClient';
+import { normalizeApplication, type OrganizerApplication } from '@/lib/organizerApplication';
 import { DatePicker, VenueSelector } from '@/components';
 import { addDays, parseISO, format } from 'date-fns';
 import { compressImage } from '@/utils/compression';
+import { generateId, normalizeUrl } from '@/utils/formatting';
+import { formatPrice } from '@/utils/price';
+import { Tag, formatTime } from '@/components/brand';
 
-// Generate a unique ID (compatible with older browsers)
-const generateId = (): string => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Fallback for older browsers
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-};
-
-// Generate time options for dropdown (every 15 minutes)
-const generateTimeOptions = () => {
-  const options: { value: string; label: string }[] = [];
-  for (let hour = 0; hour < 24; hour++) {
-    for (let minute = 0; minute < 60; minute += 15) {
-      const h = hour.toString().padStart(2, '0');
-      const m = minute.toString().padStart(2, '0');
-      const value = `${h}:${m}`;
-      
-      // Format for display (12-hour with AM/PM)
-      const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-      const ampm = hour < 12 ? 'AM' : 'PM';
-      const label = `${displayHour}:${m.padStart(2, '0')} ${ampm}`;
-      
-      options.push({ value, label });
-    }
-  }
-  return options;
-};
-
-const timeOptions = generateTimeOptions();
-
-// Normalize URL - add https:// if missing
-const normalizeUrl = (url: string): string => {
-  if (!url) return '';
-  url = url.trim();
-  if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
-  }
-  return `https://${url}`;
-};
-
-type PriceType = 'na' | 'free' | 'amount';
-type RecurrencePattern = 'none' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
-type FormType = 'select' | 'event' | 'special';
+type FormType = 'event' | 'special';
+type PriceType = '' | 'free' | 'paid' | 'pwyc' | 'cover' | 'free-rsvp';
+type EventRecurrence = 'weekly' | 'monthly' | 'custom';
+type SpecialType = 'food' | 'drink' | 'both' | 'happy-hour';
+type SpecialFrequency = 'weekly' | 'once' | 'dates';
 
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// Monday-first for the day picker
+const weekOrder = [1, 2, 3, 4, 5, 6, 0];
 
-interface EventFormData {
+const MAX_CATEGORIES = 3;
+const LIMITS = {
+  eventTitle: 40,
+  specialName: 30,
+  deal: 30,
+  summary: 90,
+  description: 250,
+};
+
+const VERIFICATION_EMAIL = 'kingstonhappenings.ca@gmail.com';
+
+interface PriceTier {
+  id: string;
+  label: string;
+  amount: string;
+}
+
+interface VenueFields {
+  venueId: string;
+  newVenueName: string;
+  newVenueAddress: string;
+  newVenueIsDowntown: boolean;
+  /** Organizer chose "Search all venues" instead of posting for their own venue */
+  searchAllVenues: boolean;
+}
+
+interface EventFormData extends VenueFields {
   id: string;
   title: string;
+  summary: string;
   description: string;
   date: string;
   startTime: string;
   endTime: string;
-  venueId: string;
-  newVenueName: string;
-  newVenueAddress: string;
   categories: EventCategory[];
   priceType: PriceType;
   priceAmount: string;
+  priceTiers: PriceTier[];
   ticketUrl: string;
-  imageFile: File | null;
+  rsvpRequired: boolean;
+  rsvpUrl: string;
+  soldOut: boolean;
   imagePreview: string;
-  // Recurrence fields
   isRecurring: boolean;
-  recurrencePattern: RecurrencePattern;
+  recurrencePattern: EventRecurrence;
   recurrenceEndDate: string;
-  // Multiple dates option
   customDates: string[];
-  // All day option
   isAllDay: boolean;
 }
 
-interface SpecialFormData {
+interface SpecialFormData extends VenueFields {
   id: string;
   title: string;
+  deal: string;
+  summary: string;
   description: string;
+  type: SpecialType;
+  frequency: SpecialFrequency;
+  recurringDays: number[];
   date: string;
+  specificDates: string[];
   startTime: string;
   endTime: string;
-  venueId: string;
-  newVenueName: string;
-  newVenueAddress: string;
-  categories: ('food' | 'drink')[];
-  price: string;
   isAllDay: boolean;
-  // Recurring fields
-  isRecurring: boolean;
-  recurrencePattern: 'none' | 'weekly' | 'days';
   recurrenceEndDate: string;
-  recurringDays: string[]; // Array of day names like ['Monday', 'Wednesday']
+  conditions: EventCategory[];
+  is19Plus: boolean;
 }
 
-const createEmptyForm = (): EventFormData => ({
+const emptyVenueFields = (venueId = ''): VenueFields => ({
+  venueId,
+  newVenueName: '',
+  newVenueAddress: '',
+  newVenueIsDowntown: false,
+  searchAllVenues: false,
+});
+
+const createEmptyForm = (venueId = ''): EventFormData => ({
+  ...emptyVenueFields(venueId),
   id: generateId(),
   title: '',
+  summary: '',
   description: '',
   date: '',
   startTime: '',
   endTime: '',
-  venueId: '',
-  newVenueName: '',
-  newVenueAddress: '',
   categories: [],
-  priceType: 'na',
+  priceType: '',
   priceAmount: '',
+  priceTiers: [],
   ticketUrl: '',
-  imageFile: null,
+  rsvpRequired: false,
+  rsvpUrl: '',
+  soldOut: false,
   imagePreview: '',
   isRecurring: false,
-  recurrencePattern: 'none',
+  recurrencePattern: 'weekly',
   recurrenceEndDate: '',
   customDates: [],
   isAllDay: false,
 });
 
-const createEmptySpecialForm = (): SpecialFormData => ({
+const createEmptySpecialForm = (venueId = ''): SpecialFormData => ({
+  ...emptyVenueFields(venueId),
   id: generateId(),
   title: '',
+  deal: '',
+  summary: '',
   description: '',
+  type: 'food',
+  frequency: 'weekly',
+  recurringDays: [],
   date: '',
+  specificDates: [],
   startTime: '',
   endTime: '',
-  venueId: '',
-  newVenueName: '',
-  newVenueAddress: '',
-  categories: [],
-  price: '',
   isAllDay: false,
-  isRecurring: false,
-  recurrencePattern: 'none',
   recurrenceEndDate: '',
-  recurringDays: [],
+  conditions: [],
+  is19Plus: false,
 });
 
-const MAX_DESCRIPTION_LENGTH = 500;
+/** The short summary leads the description, so it's what Browse cards and previews show */
+const composeDescription = (summary: string, description: string) =>
+  [summary.trim(), description.trim()].filter(Boolean).join('\n\n');
 
-export default function SubmitEventPage() {
-  const router = useRouter();
-  const { user, isAdmin, isOrganizer, isLoading: authLoading } = useAuth();
+function buildEventPrice(form: EventFormData): string | undefined {
+  const amount = form.priceAmount.trim();
+  switch (form.priceType) {
+    case 'free':
+      return 'Free';
+    case 'free-rsvp':
+      return 'Free with RSVP';
+    case 'pwyc':
+      return 'Pay what you can';
+    case 'cover':
+      return amount ? `${formatPrice(amount)} cover at the door` : 'Cover at the door';
+    case 'paid': {
+      const tiers = form.priceTiers
+        .filter((t) => t.amount.trim())
+        .map((t) => `${t.label.trim() ? `${t.label.trim()} ` : ''}${formatPrice(t.amount.trim())}`);
+      if (tiers.length === 0) return amount || undefined;
+      return [amount ? formatPrice(amount) : '', ...tiers].filter(Boolean).join(' · ');
+    }
+    default:
+      return undefined;
+  }
+}
+
+function specialTypeCategories(type: SpecialType): EventCategory[] {
+  switch (type) {
+    case 'drink':
+      return ['drink'];
+    case 'both':
+      return ['food', 'drink'];
+    case 'happy-hour':
+      return ['food', 'drink', 'happy-hour'];
+    default:
+      return ['food'];
+  }
+}
+
+const specialTypeLabels: Record<SpecialType, string> = {
+  food: 'Food',
+  drink: 'Drinks',
+  both: 'Food & drinks',
+  'happy-hour': 'Happy Hour',
+};
+
+/* ---------------- UI helpers ---------------- */
+
+function Section({
+  number,
+  title,
+  children,
+  sectionRef,
+}: {
+  number: number;
+  title: string;
+  children: ReactNode;
+  sectionRef?: (el: HTMLElement | null) => void;
+}) {
+  return (
+    <section ref={sectionRef} className="card p-5 sm:p-7">
+      <h3 className="flex items-center gap-3 text-[20px] font-bold text-navy">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-navy text-[13px] font-bold text-white">
+          {number}
+        </span>
+        {title}
+      </h3>
+      <div className="mt-5 flex flex-col gap-5">{children}</div>
+    </section>
+  );
+}
+
+function Helper({ hint, length, max }: { hint?: string; length?: number; max?: number }) {
+  return (
+    <div className="mt-1.5 flex justify-between gap-4">
+      <span className="field-hint">{hint}</span>
+      {max !== undefined && (
+        <span className="field-hint shrink-0 tabular-nums">
+          {length ?? 0} / {max}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Toggle({ on, onChange, label, hint }: { on: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <button type="button" className="switch mt-0.5" data-on={on} onClick={() => onChange(!on)} aria-pressed={on} aria-label={label}>
+        <span />
+      </button>
+      <div>
+        <p className="text-[14px] font-medium text-navy">{label}</p>
+        {hint && <p className="field-hint">{hint}</p>}
+      </div>
+    </div>
+  );
+}
+
+function ChipGroup<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((o) => (
+        <button key={o.id} type="button" className="chip" data-active={value === o.id} onClick={() => onChange(o.id)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TimeInput({ id, value, onChange, required }: { id: string; value: string; onChange: (v: string) => void; required?: boolean }) {
+  return (
+    <div className="relative">
+      <Clock size={16} className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 text-link" />
+      <input type="time" id={id} required={required} value={value} onChange={(e) => onChange(e.target.value)} className="field pl-10" />
+    </div>
+  );
+}
+
+function DateList({
+  dates,
+  onChange,
+  min,
+  placeholder,
+}: {
+  dates: string[];
+  onChange: (dates: string[]) => void;
+  min?: string;
+  placeholder: string;
+}) {
+  return (
+    <div>
+      {dates.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {dates.map((date) => (
+            <span key={date} className="chip h-8" data-active="true">
+              {format(parseISO(date), 'EEE, MMM d')}
+              <button type="button" onClick={() => onChange(dates.filter((d) => d !== date))} aria-label="Remove date">
+                <X size={13} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <DatePicker
+        value=""
+        onChange={(value) => {
+          if (value && !dates.includes(value)) onChange([...dates, value].sort());
+        }}
+        min={min}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+}
+
+/* ---------------- Organizer venue ---------------- */
+
+
+function VenueSummary({
+  venue,
+  application,
+  date,
+  canEditVenue,
+}: {
+  venue: Venue;
+  application: OrganizerApplication | null;
+  date: string;
+  canEditVenue: boolean;
+}) {
+  const [open, setOpen] = useState(true);
+  const [confirmed, setConfirmed] = useState(false);
+
+  const day = format(date ? parseISO(date) : new Date(), 'EEE');
+  // Venue details live on the venue; fall back to what the organizer gave when applying
+  const applied = application?.venues.find((v) => v.claimedVenueId === venue.id || v.name.trim().toLowerCase() === venue.name.trim().toLowerCase());
+  const hours = venue.hours?.[day] ?? applied?.hours?.[day];
+  const accessibility = venue.accessibility?.length ? venue.accessibility : application?.accessibility;
+  const details: [string, string][] = [
+    ['Address', `${venue.address}${venue.neighborhood ? ` · ${venue.neighborhood}` : ''}`],
+  ];
+  if (hours) {
+    details.push(['Hours on this day', hours.closed ? `${day} · Closed` : `${day} ${formatTime(hours.open)} – ${formatTime(hours.close)}`]);
+  }
+  if (accessibility?.length) details.push(['Accessibility', accessibility.join(' · ')]);
+  if (venue.website) details.push(['Website', venue.website.replace(/^https?:\/\//, '')]);
+
+  const editHref = canEditVenue
+    ? `/venues/${venue.id}`
+    : `mailto:${VERIFICATION_EMAIL}?subject=${encodeURIComponent(`Venue details update: ${venue.name}`)}&body=${encodeURIComponent(
+    `Hi! Some details for ${venue.name} have changed:\n\n`
+  )}`;
+
+  return (
+    <div className="overflow-hidden rounded-[16px] bg-[#f3f8fc]">
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <Building2 size={18} className="shrink-0 text-link" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[14px] font-bold text-navy">Your venue details</p>
+          <p className="text-[13px] text-ink-muted">
+            {confirmed ? 'Thanks for checking. These are added to your listing automatically.' : 'These are added to your listing automatically. Check they’re still right.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex shrink-0 items-center gap-1 text-[13px] font-medium text-link hover:underline"
+        >
+          {open ? 'Hide' : 'Show'}
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </div>
+      {open && (
+        <>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-4 pb-4 pl-[46px] pr-4 pt-1 sm:grid-cols-2">
+            {details.map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-[#6d7682]">{label}</p>
+                <p className="mt-[3px] break-words text-[14px] text-navy">{value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-4 border-t border-[#dce7f1] py-3 pl-[46px] pr-4">
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmed(true);
+                setOpen(false);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full bg-navy px-3.5 py-[7px] text-[13px] font-medium text-white"
+            >
+              <Check size={13} strokeWidth={2.5} /> Looks right
+            </button>
+            <a href={editHref} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-link hover:underline">
+              <Pencil size={14} /> Something changed? Edit venue details
+            </a>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function LocationFields({
+  idPrefix,
+  form,
+  update,
+  venues,
+  organizerVenues,
+  linkedVenueIds,
+  application,
+  noun,
+}: {
+  idPrefix: string;
+  form: VenueFields & { id: string; date: string };
+  update: (updates: Partial<VenueFields>) => void;
+  venues: Venue[];
+  organizerVenues: Venue[];
+  linkedVenueIds: string[];
+  application: OrganizerApplication | null;
+  noun: 'event' | 'special';
+}) {
+  const organizerVenue = form.searchAllVenues ? undefined : organizerVenues.find((v) => v.id === form.venueId);
+  const postingForOwnVenue = !!organizerVenue;
+  return (
+    <>
+      <VenueSelector
+        venues={venues}
+        selectedVenueId={form.venueId}
+        newVenueName={form.newVenueName}
+        newVenueAddress={form.newVenueAddress}
+        newVenueIsDowntown={form.newVenueIsDowntown}
+        onVenueSelect={(venueId) => update({ venueId })}
+        onNewVenueNameChange={(newVenueName) => update({ newVenueName })}
+        onNewVenueAddressChange={(newVenueAddress) => update({ newVenueAddress })}
+        onNewVenueIsDowntownChange={(newVenueIsDowntown) => update({ newVenueIsDowntown })}
+        label={postingForOwnVenue ? 'Posting for' : 'Venue'}
+        placeholder="Search venues…"
+        required
+        id={`${idPrefix}-${form.id}`}
+      />
+      {postingForOwnVenue && organizerVenue ? (
+        <>
+          {organizerVenues.length > 1 && (
+            <div className="flex flex-wrap gap-2">
+              {organizerVenues.map((v) => (
+                <button key={v.id} type="button" className="chip" data-active={v.id === organizerVenue.id} onClick={() => update({ venueId: v.id })}>
+                  {v.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <VenueSummary venue={organizerVenue} application={application} date={form.date} canEditVenue={linkedVenueIds.includes(organizerVenue.id)} />
+          <button
+            type="button"
+            onClick={() => update({ ...emptyVenueFields(), searchAllVenues: true })}
+            className="self-start text-[13px] font-medium text-link hover:underline"
+          >
+            Posting somewhere else? Search all venues
+          </button>
+        </>
+      ) : (
+        <p className="text-[13px] font-medium text-link">
+          Can&rsquo;t find your venue? Add a new one and we&rsquo;ll review it with your {noun}.
+        </p>
+      )}
+    </>
+  );
+}
+
+function PhotoField({
+  preview,
+  onSelect,
+  onRemove,
+}: {
+  preview: string;
+  onSelect: (file: File) => void;
+  onRemove: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div>
+      <p className="field-label">Photo (optional)</p>
+      {preview ? (
+        <div className="relative overflow-hidden rounded-[14px]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt="Event preview" className="h-48 w-full object-cover" />
+          <button
+            type="button"
+            onClick={() => {
+              onRemove();
+              if (inputRef.current) inputRef.current.value = '';
+            }}
+            className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-navy text-white"
+            aria-label="Remove photo"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      ) : (
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) onSelect(file);
+          }}
+          onClick={() => inputRef.current?.click()}
+          className="cursor-pointer rounded-[14px] border-[1.5px] border-dashed border-link/50 bg-sky-soft p-7 text-center transition-colors hover:bg-sky"
+        >
+          <Upload size={22} className="mx-auto text-link" />
+          <p className="mt-2 text-[14px] font-medium text-navy">Drag your photo here, or click to upload</p>
+          <p className="field-hint mt-1">PNG, JPG up to 5MB · Recommended 800×600</p>
+        </div>
+      )}
+      <p className="field-hint mt-1.5">Major Venues can add a photo. It shows on the Coming up page.</p>
+      <input
+        type="file"
+        ref={inputRef}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onSelect(file);
+        }}
+        accept="image/*"
+        className="hidden"
+      />
+    </div>
+  );
+}
+
+function SubmitSidebar({ formType, instant, showOrganizerTips }: { formType: FormType; instant: boolean; showOrganizerTips: boolean }) {
+  const noun = formType === 'event' ? 'event' : 'special';
+  const steps = instant
+    ? [
+        ['Fill in the details', 'Tell us what, when and where.'],
+        ['Publish', 'Listings go live right away.'],
+        ['It goes live', 'On Today, Browse and in your venue.'],
+      ]
+    : [
+        ['Fill in the details', 'Tell us what, when and where.'],
+        ['We review it', 'Usually within 24 hours.'],
+        ['It goes live', 'On Today, Browse and in your venue.'],
+      ];
+  return (
+    <aside className="flex flex-col gap-4 lg:sticky lg:top-24 self-start w-full">
+      <div className="rounded-[22px] bg-navy p-7 text-white">
+        <p className="eyebrow-bold text-sun">Post your {noun}</p>
+        <ol className="mt-4 flex flex-col gap-[18px]">
+          {steps.map(([t, d], i) => (
+            <li key={t} className="flex gap-3.5">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sun text-[12px] font-bold text-navy">
+                {i + 1}
+              </span>
+              <span>
+                <span className="block text-[15px] font-bold">{t}</span>
+                <span className="block text-[13px] text-on-dark-muted">{d}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+      {showOrganizerTips && (
+        <div className="rounded-[22px] bg-sky p-7">
+          <p className="eyebrow-bold text-ink-muted">Make an organizer account</p>
+          <ul className="mt-3 flex flex-col gap-3">
+            {['If you are associated with a restaurant or venue in Kingston.', 'Verified organizers can auto-publish events & specials.'].map((t) => (
+              <li key={t} className="flex items-center gap-2.5 text-[14px] text-navy">
+                <Check size={16} className="shrink-0 text-link" />
+                {t}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function OrganizerBanner({
+  name,
+  isVerified,
+  requestedAt,
+}: {
+  name: string;
+  isVerified: boolean;
+  requestedAt: string | null;
+}) {
+  if (isVerified) {
+    return (
+      <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[14px] bg-[#fff1d6] px-[18px] py-3.5 text-[14px] text-navy">
+        <span className="tag bg-sun text-navy gap-1">
+          <Check size={12} strokeWidth={3} /> Verified Organizer
+        </span>
+        Signed in as {name}. Your listings go live right away, no admin approval needed.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-6 flex flex-col gap-3 rounded-[14px] bg-[#fff1d6] px-[18px] py-3.5 text-[14px] text-navy sm:flex-row sm:items-center sm:justify-between">
+      <p>
+        {requestedAt
+          ? `Signed in as ${name}. Your verification request was sent ${format(new Date(requestedAt), 'MMM d')}. Until it’s approved, listings are reviewed before they go live.`
+          : `Signed in as ${name}. Your listings are reviewed by our team before they go live.`}
+      </p>
+      {requestedAt ? (
+        <span className="tag shrink-0 self-start bg-white text-[#8a5a00] gap-1 sm:self-auto">
+          <span className="h-1.5 w-1.5 rounded-full bg-sun" /> Verification requested
+        </span>
+      ) : (
+        <Link href="/organizer-verification" className="btn-navy btn-sm shrink-0 self-start sm:self-auto">
+          <ShieldCheck size={14} /> Request to be an approved organizer
+        </Link>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Page ---------------- */
+
+interface SubmittedSummary {
+  formType: FormType;
+  count: number;
+  title: string;
+  venueName: string;
+  when: string;
+  time: string;
+  tags: { label: string; className: string }[];
+  submittedAt: Date;
+  eventId?: string;
+}
+
+function SubmitContent() {
+  const searchParams = useSearchParams();
+  const typeParam = searchParams.get('type');
+  const formType: FormType | null = typeParam === 'special' ? 'special' : typeParam === 'event' ? 'event' : null;
+
+  const { user, isAdmin, isLoading: authLoading } = useAuth();
   const { submitEvent, venues } = useEvents();
-  
-  const [formType, setFormType] = useState<FormType>('select');
-  const [isSubmitted, setIsSubmitted] = useState(false);
+  const { isVerifiedOrganizer, verificationRequestedAt, organizerVenueIds } = useOrganizerVerification();
+  const isOrganizerRole = user?.role === 'organizer';
+  const isVerified = isVerifiedOrganizer;
+
+  const [submitted, setSubmitted] = useState<SubmittedSummary | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [eventForms, setEventForms] = useState<EventFormData[]>([createEmptyForm()]);
-  const [specialForms, setSpecialForms] = useState<SpecialFormData[]>([createEmptySpecialForm()]);
-  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  // Refs for scrolling to the section containing a field that failed validation.
+  const [eventForms, setEventForms] = useState<EventFormData[]>(() => [createEmptyForm()]);
+  const [specialForms, setSpecialForms] = useState<SpecialFormData[]>(() => [createEmptySpecialForm()]);
+  const [application, setApplication] = useState<OrganizerApplication | null>(null);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  // Organizers post for the venue on their account by default
+  const organizerVenueName = isOrganizerRole ? user?.venueName?.trim().toLowerCase() : undefined;
+  const organizerVenues = isOrganizerRole
+    ? venues.filter((v) => organizerVenueIds.includes(v.id) || (!!organizerVenueName && v.name.trim().toLowerCase() === organizerVenueName))
+    : [];
+  const organizerVenueId = organizerVenues[0]?.id;
+
+  useEffect(() => {
+    if (!organizerVenueId) return;
+    const fill = <T extends VenueFields>(forms: T[]) =>
+      forms.some((f) => !f.venueId && !f.searchAllVenues)
+        ? forms.map((f) => (!f.venueId && !f.searchAllVenues ? { ...f, venueId: organizerVenueId } : f))
+        : forms;
+    setEventForms(fill);
+    setSpecialForms(fill);
+  }, [organizerVenueId]);
+
+  // Venue hours/accessibility the organizer gave when applying
+  useEffect(() => {
+    if (!isOrganizerRole) return;
+    let cancelled = false;
+    supabase.auth.getUser().then(({ data }) => {
+      if (!cancelled) setApplication(normalizeApplication(data.user?.user_metadata?.organizerApplication));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOrganizerRole]);
+
+  // Fresh form + error state whenever the user switches between event and special
+  useEffect(() => {
+    setError('');
+    setSubmitted(null);
+  }, [formType]);
 
   const registerFieldRef = (key: string) => (el: HTMLElement | null) => {
     fieldRefs.current[key] = el;
   };
 
-  // Scroll the offending field/section into view and focus the first control inside it,
-  // so it's immediately obvious why the form didn't submit.
+  // Scroll the offending field/section into view and focus its first control
   const scrollToField = (key: string) => {
-    // Give React a tick to render any newly-expanded sections (e.g. recurrence options)
-    // before we try to measure/scroll to them.
     requestAnimationFrame(() => {
       const el = fieldRefs.current[key];
       if (!el) return;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      const focusable = el.querySelector<HTMLElement>(
-        'input:not([type="hidden"]), select, textarea, button'
-      );
+      const focusable = el.querySelector<HTMLElement>('input:not([type="hidden"]), select, textarea, button');
       (focusable || el).focus?.({ preventScroll: true });
     });
   };
 
-  const handleCategoryToggle = (formId: string, category: EventCategory) => {
-    setEventForms(prev => prev.map(form => {
-      if (form.id !== formId) return form;
-      return {
-        ...form,
-        categories: form.categories.includes(category)
-          ? form.categories.filter(c => c !== category)
-          : [...form.categories, category]
-      };
-    }));
-  };
-
-  const handleSpecialCategoryToggle = (formId: string, category: 'food' | 'drink') => {
-    setSpecialForms(prev => prev.map(form => {
-      if (form.id !== formId) return form;
-      return {
-        ...form,
-        categories: form.categories.includes(category)
-          ? form.categories.filter(c => c !== category)
-          : [...form.categories, category]
-      };
-    }));
-  };
-
   const updateForm = (formId: string, updates: Partial<EventFormData>) => {
-    setEventForms(prev => prev.map(form => 
-      form.id === formId ? { ...form, ...updates } : form
-    ));
+    setEventForms((prev) => prev.map((form) => (form.id === formId ? { ...form, ...updates } : form)));
   };
 
   const updateSpecialForm = (formId: string, updates: Partial<SpecialFormData>) => {
-    setSpecialForms(prev => prev.map(form => 
-      form.id === formId ? { ...form, ...updates } : form
-    ));
+    setSpecialForms((prev) => prev.map((form) => (form.id === formId ? { ...form, ...updates } : form)));
   };
 
-  const handleImageDrop = useCallback((formId: string, e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      handleImageSelect(formId, file);
+  const handleCategoryToggle = (formId: string, category: EventCategory) => {
+    setEventForms((prev) =>
+      prev.map((form) => {
+        if (form.id !== formId) return form;
+        if (form.categories.includes(category)) {
+          return { ...form, categories: form.categories.filter((c) => c !== category) };
+        }
+        // 19+ is the age limit, so it doesn't count toward the 3-category cap
+        const picked = form.categories.filter((c) => c !== '19plus').length;
+        if (category !== '19plus' && picked >= MAX_CATEGORIES) return form;
+        return { ...form, categories: [...form.categories, category] };
+      })
+    );
+  };
+
+  const resetForms = () => {
+    setEventForms([createEmptyForm(organizerVenueId)]);
+    setSpecialForms([createEmptySpecialForm(organizerVenueId)]);
+    setError('');
+  };
+
+  const venueFor = (venueId: string) => venues.find((v) => v.id === venueId);
+  const venueNameFor = (venueId: string, newName: string) => (venueId === 'new' ? newName : venueFor(venueId)?.name || '');
+  const canAddPhoto = (venueId: string) => !!venueFor(venueId)?.isMajor;
+
+  const venuePayload = (form: VenueFields) => ({
+    venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
+    newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
+    newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
+    newVenueIsDowntown: form.venueId === 'new' ? form.newVenueIsDowntown : undefined,
+  });
+
+  const validateVenue = (form: VenueFields, label: string, key: string) => {
+    if (!form.venueId) {
+      setError(`Please select a venue or create a new one for "${label}"`);
+      scrollToField(key);
+      return false;
     }
-  }, []);
-
-  const handleImageSelect = async (formId: string, file: File) => {
-    const compressed = await compressImage(file);
-    updateForm(formId, {
-      imageFile: file,
-      imagePreview: compressed
-    });
-  };
-
-  const handleFileInputChange = (formId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleImageSelect(formId, file);
+    if (form.venueId === 'new' && (!form.newVenueName || !form.newVenueAddress)) {
+      setError(`Please provide both venue name and address for "${label}"`);
+      scrollToField(key);
+      return false;
     }
-  };
-
-  const removeImage = (formId: string) => {
-    updateForm(formId, { imageFile: null, imagePreview: '' });
-    if (fileInputRefs.current[formId]) {
-      fileInputRefs.current[formId]!.value = '';
-    }
-  };
-
-  const addAnotherEvent = () => {
-    setEventForms(prev => [...prev, createEmptyForm()]);
-  };
-
-  const addAnotherSpecial = () => {
-    setSpecialForms(prev => [...prev, createEmptySpecialForm()]);
-  };
-
-  const removeEventForm = (formId: string) => {
-    if (eventForms.length > 1) {
-      setEventForms(prev => prev.filter(form => form.id !== formId));
-    }
-  };
-
-  const removeSpecialForm = (formId: string) => {
-    if (specialForms.length > 1) {
-      setSpecialForms(prev => prev.filter(form => form.id !== formId));
-    }
+    return true;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -298,1295 +782,1158 @@ export default function SubmitEventPage() {
     setError('');
 
     if (formType === 'event') {
-      // Validate all event forms
-    for (const form of eventForms) {
-      if (form.categories.length === 0) {
-        setError(`Please select at least one category for "${form.title || 'untitled event'}"`);
-        scrollToField(`categories-${form.id}`);
-        return;
-      }
-
-      if (!form.venueId) {
-        setError(`Please select a venue or create a new one for "${form.title || 'untitled event'}"`);
-        scrollToField(`venue-${form.id}`);
-        return;
-      }
-
-      if (form.venueId === 'new' && (!form.newVenueName || !form.newVenueAddress)) {
-        setError(`Please provide both venue name and address for "${form.title || 'untitled event'}"`);
-        scrollToField(`venue-${form.id}`);
-        return;
-      }
-
-      // Validate recurring weekly events require an end date
-      if (form.isRecurring && form.recurrencePattern === 'weekly' && !form.recurrenceEndDate) {
-        setError(`Please select an end date for the recurring weekly event "${form.title || 'untitled event'}". Maximum duration is 52 weeks.`);
-        scrollToField(`recurrenceEndDate-${form.id}`);
-        return;
-      }
-
-      // Validate recurrence end date is within 52 weeks
-      if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
-        const startDate = parseISO(form.date);
-        const endDate = parseISO(form.recurrenceEndDate);
-        const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
-        if (weeksDiff > 52) {
-          setError(`The recurrence period for "${form.title || 'untitled event'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
+      for (const form of eventForms) {
+        const label = form.title || 'untitled event';
+        if (form.categories.filter((c) => c !== '19plus').length === 0) {
+          setError(`Please select at least one category for "${label}"`);
+          scrollToField(`categories-${form.id}`);
+          return;
+        }
+        if (!form.date) {
+          setError(`Please pick a date for "${label}"`);
+          scrollToField(`date-${form.id}`);
+          return;
+        }
+        if (!validateVenue(form, label, `venue-${form.id}`)) return;
+        if (form.isRecurring && form.recurrencePattern === 'weekly' && !form.recurrenceEndDate) {
+          setError(`Please select an end date for the recurring weekly event "${label}". Maximum duration is 52 weeks.`);
           scrollToField(`recurrenceEndDate-${form.id}`);
+          return;
+        }
+        if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
+          const weeksDiff = Math.ceil(
+            (parseISO(form.recurrenceEndDate).getTime() - parseISO(form.date).getTime()) / (7 * 24 * 60 * 60 * 1000)
+          );
+          if (weeksDiff > 52) {
+            setError(
+              `The recurrence period for "${label}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`
+            );
+            scrollToField(`recurrenceEndDate-${form.id}`);
+            return;
+          }
+        }
+        if (form.isRecurring && form.recurrencePattern === 'custom' && form.customDates.length === 0) {
+          setError(`Please add the other dates for "${label}"`);
+          scrollToField(`customDates-${form.id}`);
+          return;
+        }
+      }
+
+      setIsSubmitting(true);
+      try {
+        let first: Event | null = null;
+        for (const form of eventForms) {
+          const categories: EventCategory[] = [...form.categories];
+          if (form.rsvpRequired) categories.push('rsvp');
+          if (form.soldOut) categories.push('sold-out');
+
+          const base = {
+            title: form.title.trim(),
+            description: composeDescription(form.summary, form.description),
+            startTime: form.isAllDay ? '00:00' : form.startTime,
+            endTime: form.isAllDay ? undefined : form.endTime || undefined,
+            ...venuePayload(form),
+            categories,
+            price: buildEventPrice(form),
+            ticketUrl: normalizeUrl(form.ticketUrl) || (form.rsvpRequired ? normalizeUrl(form.rsvpUrl) : '') || undefined,
+            imageUrl: canAddPhoto(form.venueId) ? form.imagePreview || undefined : undefined,
+            isAllDay: form.isAllDay,
+          };
+
+          if (form.isRecurring && form.recurrencePattern === 'custom') {
+            // Multiple specific dates: one listing per date
+            for (const date of [form.date, ...form.customDates.filter((d) => d !== form.date)]) {
+              const created = await submitEvent({ ...base, date, isRecurring: false });
+              first = first ?? created;
+            }
+          } else {
+            const created = await submitEvent({
+              ...base,
+              date: form.date,
+              isRecurring: form.isRecurring,
+              recurrencePattern: form.isRecurring ? form.recurrencePattern : undefined,
+              recurrenceEndDate: form.isRecurring ? form.recurrenceEndDate || undefined : undefined,
+            });
+            first = first ?? created;
+          }
+        }
+        const f = eventForms[0];
+        setSubmitted({
+          formType: 'event',
+          count: eventForms.length,
+          title: f.title,
+          venueName: venueNameFor(f.venueId, f.newVenueName),
+          when:
+            f.isRecurring && f.recurrencePattern !== 'custom' && f.date
+              ? `${f.recurrencePattern === 'monthly' ? 'Monthly' : 'Every'} ${dayNames[parseISO(f.date).getDay()]}`
+              : format(parseISO(f.date), 'EEEE, MMMM d'),
+          time: f.isAllDay ? 'All day' : `${formatTime(f.startTime)}${f.endTime ? ` – ${formatTime(f.endTime)}` : ''}`,
+          tags: f.categories
+            .filter((c) => c !== '19plus')
+            .slice(0, 2)
+            .map((c) => ({ label: categoryLabels[c], className: categoryTagStyles[c] })),
+          submittedAt: new Date(),
+          eventId: first?.id,
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err) {
+        console.error('[Submit] Error submitting events:', err);
+        setError(err instanceof Error ? err.message : 'Failed to submit event(s). Please try again.');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // Specials
+    for (const form of specialForms) {
+      const label = form.title || 'untitled special';
+      if (form.frequency === 'weekly' && form.recurringDays.length === 0) {
+        setError(`Please pick which days "${label}" runs`);
+        scrollToField(`special-days-${form.id}`);
+        return;
+      }
+      if (form.frequency === 'dates' ? form.specificDates.length === 0 : !form.date) {
+        setError(`Please pick ${form.frequency === 'dates' ? 'the dates' : 'a start date'} for "${label}"`);
+        scrollToField(`special-date-${form.id}`);
+        return;
+      }
+      if (!validateVenue(form, label, `special-venue-${form.id}`)) return;
+      if (form.frequency === 'weekly' && form.recurrenceEndDate && form.date) {
+        const weeksDiff = Math.ceil(
+          (parseISO(form.recurrenceEndDate).getTime() - parseISO(form.date).getTime()) / (7 * 24 * 60 * 60 * 1000)
+        );
+        if (weeksDiff > 52) {
+          setError(`The run for "${label}" cannot exceed 52 weeks.`);
+          scrollToField(`special-recurrenceEndDate-${form.id}`);
           return;
         }
       }
     }
 
     setIsSubmitting(true);
-
     try {
-      // Submit all events
-      for (const form of eventForms) {
-        const imageUrl = form.imagePreview || undefined;
+      let first: Event | null = null;
+      for (const form of specialForms) {
+        // 'food-deal' marks it as a special; type, fine print and age are stored alongside
+        const categories: EventCategory[] = ['food-deal', ...specialTypeCategories(form.type), ...form.conditions];
+        if (form.is19Plus) categories.push('19plus');
 
-        let priceString: string | undefined;
-        if (form.priceType === 'free') {
-          priceString = 'Free';
-        } else if (form.priceType === 'amount' && form.priceAmount) {
-          // Save raw value — formatPrice prepends $ on display when numeric
-          priceString = form.priceAmount.trim();
-        }
-
-        await submitEvent({
-          title: form.title,
-          description: form.description,
-          date: form.date,
+        const base = {
+          title: form.title.trim(),
+          description: composeDescription(form.summary, form.description),
           startTime: form.isAllDay ? '00:00' : form.startTime,
-          endTime: form.isAllDay ? undefined : (form.endTime || undefined),
-          venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
-          newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
-          newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
-          categories: form.categories,
-          price: priceString,
-          ticketUrl: normalizeUrl(form.ticketUrl) || undefined,
-          imageUrl,
-          isRecurring: form.isRecurring,
-          recurrencePattern: form.isRecurring ? form.recurrencePattern : undefined,
-          recurrenceEndDate: form.isRecurring ? form.recurrenceEndDate || undefined : undefined,
+          endTime: form.isAllDay ? undefined : form.endTime || undefined,
+          ...venuePayload(form),
+          categories,
+          price: form.deal.trim() || undefined,
+          ticketUrl: undefined,
           isAllDay: form.isAllDay,
-        });
-      }
+        };
 
-      setIsSubmitted(true);
+        if (form.frequency === 'weekly') {
+          const created = await submitEvent({
+            ...base,
+            date: form.date,
+            isRecurring: true,
+            recurrencePattern: 'weekly',
+            recurrenceEndDate: form.recurrenceEndDate || undefined,
+            recurrenceDays: form.recurringDays,
+          });
+          first = first ?? created;
+        } else {
+          const dates = form.frequency === 'dates' ? form.specificDates : [form.date];
+          for (const date of dates) {
+            const created = await submitEvent({ ...base, date, isRecurring: false });
+            first = first ?? created;
+          }
+        }
+      }
+      const f = specialForms[0];
+      const days = [...f.recurringDays].sort((a, b) => weekOrder.indexOf(a) - weekOrder.indexOf(b)).map((d) => dayNames[d]);
+      const firstDate = f.frequency === 'dates' ? f.specificDates[0] : f.date;
+      setSubmitted({
+        formType: 'special',
+        count: specialForms.length,
+        title: f.title,
+        venueName: venueNameFor(f.venueId, f.newVenueName),
+        when:
+          f.frequency === 'weekly' && days.length > 0
+            ? `Every ${days.join(' & ')}`
+            : f.frequency === 'dates' && f.specificDates.length > 1
+            ? `${f.specificDates.length} dates from ${format(parseISO(firstDate), 'MMMM d')}`
+            : format(parseISO(firstDate), 'EEEE, MMMM d'),
+        time: f.isAllDay ? 'All day' : `${formatTime(f.startTime)}${f.endTime ? ` – ${formatTime(f.endTime)}` : ''}`,
+        tags: [{ label: specialTypeLabels[f.type], className: categoryTagStyles[f.type === 'drink' ? 'drink' : 'food'] }],
+        submittedAt: new Date(),
+        eventId: first?.id,
+      });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
-      console.error('[Submit] Error submitting events:', err);
-      setError(err instanceof Error ? err.message : 'Failed to submit event(s). Please try again.');
+      console.error('[Submit] Error submitting specials:', err);
+      setError(err instanceof Error ? err.message : 'Failed to submit special(s). Please try again.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsSubmitting(false);
-      }
-    } else if (formType === 'special') {
-      // Validate all special forms
-      for (const form of specialForms) {
-        if (form.categories.length === 0) {
-          setError(`Please select at least one category (Food or Drink) for "${form.title || 'untitled special'}"`);
-          scrollToField(`special-categories-${form.id}`);
-          return;
-        }
-
-        if (!form.venueId) {
-          setError(`Please select a venue or create a new one for "${form.title || 'untitled special'}"`);
-          scrollToField(`special-venue-${form.id}`);
-          return;
-        }
-
-        if (form.venueId === 'new' && (!form.newVenueName || !form.newVenueAddress)) {
-          setError(`Please provide both venue name and address for "${form.title || 'untitled special'}"`);
-          scrollToField(`special-venue-${form.id}`);
-          return;
-        }
-
-        // Validate recurring weekly specials require an end date
-        if (form.isRecurring && form.recurrencePattern === 'weekly' && !form.recurrenceEndDate) {
-          setError(`Please select an end date for the recurring weekly special "${form.title || 'untitled special'}". Maximum duration is 52 weeks.`);
-          scrollToField(`special-recurrenceEndDate-${form.id}`);
-          return;
-        }
-
-        // Validate recurrence end date is within 52 weeks
-        if (form.isRecurring && form.recurrencePattern === 'weekly' && form.recurrenceEndDate && form.date) {
-          const startDate = parseISO(form.date);
-          const endDate = parseISO(form.recurrenceEndDate);
-          const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
-          if (weeksDiff > 52) {
-            setError(`The recurrence period for "${form.title || 'untitled special'}" cannot exceed 52 weeks. Please select an end date within 52 weeks from the start date.`);
-            scrollToField(`special-recurrenceEndDate-${form.id}`);
-            return;
-          }
-        }
-      }
-
-      setIsSubmitting(true);
-
-      try {
-        // Submit all specials
-        for (const form of specialForms) {
-          // Convert special categories to EventCategory format
-          // Store both 'food-deal' (for general filtering) and 'food'/'drink' (for specific filtering)
-          const categories: EventCategory[] = ['food-deal'];
-          if (form.categories.includes('food')) categories.push('food');
-          if (form.categories.includes('drink')) categories.push('drink');
-
-          // Handle recurring specials — one series with multiple weekdays
-          if (form.isRecurring && form.recurrencePattern === 'days' && form.recurringDays.length > 0) {
-            const recurrenceDays = form.recurringDays.map((day) => dayNames.indexOf(day)).filter((d) => d >= 0);
-
-            await submitEvent({
-              title: form.title,
-              description: form.description,
-              date: form.date,
-              startTime: form.isAllDay ? '00:00' : form.startTime,
-              endTime: form.isAllDay ? undefined : (form.endTime || undefined),
-              venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
-              newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
-              newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
-              categories,
-              price: form.price || undefined,
-              ticketUrl: undefined,
-              isRecurring: true,
-              recurrencePattern: 'weekly',
-              recurrenceEndDate: form.recurrenceEndDate || undefined,
-              recurrenceDays,
-              isAllDay: form.isAllDay,
-            });
-          } else {
-            // For weekly or non-recurring specials
-            await submitEvent({
-              title: form.title,
-              description: form.description,
-              date: form.date,
-              startTime: form.isAllDay ? '00:00' : form.startTime,
-              endTime: form.isAllDay ? undefined : (form.endTime || undefined),
-              venueId: form.venueId === 'new' ? 'new' : form.venueId || undefined,
-              newVenueName: form.venueId === 'new' ? form.newVenueName : undefined,
-              newVenueAddress: form.venueId === 'new' ? form.newVenueAddress : undefined,
-              categories,
-              price: form.price || undefined,
-              ticketUrl: undefined,
-              isRecurring: form.isRecurring,
-              recurrencePattern: form.isRecurring && form.recurrencePattern === 'weekly' ? 'weekly' : undefined,
-              recurrenceEndDate: form.isRecurring ? (form.recurrenceEndDate || undefined) : undefined,
-              isAllDay: form.isAllDay,
-            });
-          }
-        }
-
-        setIsSubmitted(true);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } catch (err) {
-        setError('Failed to submit special(s). Please try again.');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } finally {
-        setIsSubmitting(false);
-      }
     }
   };
 
-  // Show loading state while checking auth
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 size={32} className="animate-spin text-primary" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-navy" />
       </div>
     );
   }
 
-  // Require login to submit events
+  /* ---------- Signed-out gate ---------- */
   if (!user) {
+    const redirect = formType ? `/submit?type=${formType}` : '/submit';
     return (
-      <div className="min-h-screen flex items-center justify-center py-16">
-        <div className="text-center max-w-md mx-auto px-4">
-          <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
-            <LogIn size={40} className="text-primary" />
+      <div className="bg-sky-soft px-4 py-16">
+        <div className="mx-auto max-w-[440px] rounded-[22px] border border-line bg-white p-8 text-center">
+          <div className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-full bg-sky text-navy">
+            <Lock size={20} />
           </div>
-          <h1 className="font-display text-3xl text-foreground mb-4">
-            Login Required
+          <p className="eyebrow-sm mt-5">— Submit an event</p>
+          <h1 className="mt-3 text-[30px] font-bold leading-[1.1] tracking-[-0.02em] text-navy">
+            Create an account
+            <br />
+            to post
           </h1>
-          <p className="text-muted-foreground mb-8">
-            You need to be logged in to submit events. Create an account or log in to get started.
+          <p className="mt-4 text-[14px] leading-[1.5] text-ink-muted">
+            Submitting events and specials requires an account. If you are associated with a venue or are an artist, you can
+            create an Organizer account!
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href="/login?redirect=/submit"
-              className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium"
-            >
-              Log In
+          <ul className="mx-auto mt-5 flex w-fit flex-col gap-2 text-left">
+            {['Track every submission in My Events', 'Edit or cancel a listing anytime', 'Get an email the moment it goes live'].map((t) => (
+              <li key={t} className="flex items-center gap-2 text-[13px] text-navy">
+                <Check size={14} className="text-link" />
+                {t}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-6 flex flex-col gap-2.5">
+            <Link href={`/login?redirect=${encodeURIComponent(redirect)}`} className="btn-sun w-full">
+              Sign in
             </Link>
-            <Link
-              href="/register?redirect=/submit"
-              className="px-6 py-3 border border-border rounded-xl font-medium hover:bg-muted transition-colors"
-            >
-              Create Account
+            <Link href="/register" className="btn-outline w-full">
+              Create account
             </Link>
           </div>
+          <p className="mt-5 border-t border-line pt-4 text-[13px] text-ink-muted">
+            Run a venue?{' '}
+            <Link href="/become-organizer" className="font-medium text-link hover:underline">
+              Become an organizer →
+            </Link>
+          </p>
+        </div>
+        <p className="mt-6 text-center text-[13px] text-ink-muted">
+          Just looking around?{' '}
+          <Link href="/events" className="font-medium text-navy underline">
+            Browse what&rsquo;s on →
+          </Link>
+        </p>
+      </div>
+    );
+  }
+
+  /* ---------- Event or special? ---------- */
+  if (!formType) {
+    const choices = [
+      {
+        href: '/submit?type=event',
+        icon: <CalendarDays size={22} />,
+        iconClass: 'bg-navy text-white',
+        title: 'An event',
+        body: 'Live music, activity nights, markets, workshops, anything happening on a certain day.',
+        cta: 'Submit an event →',
+      },
+      {
+        href: '/submit?type=special',
+        icon: <Utensils size={22} />,
+        iconClass: 'bg-coral text-navy',
+        title: 'A food & drink special',
+        body: 'Happy hours, weekly deals and limited-time menus at your restaurant or bar.',
+        cta: 'Submit a special →',
+      },
+    ];
+    return (
+      <div className="page-container pb-24 pt-10">
+        <p className="eyebrow mb-3.5">— Submit</p>
+        <h1 className="display-section">
+          What are you
+          <br />
+          posting?
+        </h1>
+        <p className="mt-4 text-[18px] text-ink-muted">Pick one to get started.</p>
+        <div className="mt-10 grid max-w-[880px] grid-cols-1 gap-4 sm:grid-cols-2">
+          {choices.map((c) => (
+            <Link
+              key={c.href}
+              href={c.href}
+              className="card group flex flex-col items-start p-7 transition-colors hover:border-navy"
+            >
+              <span className={`flex h-12 w-12 items-center justify-center rounded-full ${c.iconClass}`}>{c.icon}</span>
+              <span className="mt-5 text-[24px] font-bold leading-tight text-navy">{c.title}</span>
+              <span className="mt-2 text-[14px] leading-[1.5] text-ink-muted">{c.body}</span>
+              <span className="mt-6 text-[14px] font-bold text-link group-hover:underline">{c.cta}</span>
+            </Link>
+          ))}
         </div>
       </div>
     );
   }
 
-  if (isSubmitted) {
+  /* ---------- Thank-you ---------- */
+  if (submitted) {
+    const noun = submitted.formType === 'event' ? 'event' : 'special';
+    const plural = submitted.count > 1;
     return (
-      <div className="min-h-screen flex items-center justify-center py-16">
-        <div className="text-center max-w-md mx-auto px-4">
-          <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-6">
-            <CheckCircle size={40} className="text-green-600" />
-          </div>
-          <h1 className="font-display text-3xl text-foreground mb-4">
-            {formType === 'event'
-              ? (eventForms.length > 1 ? 'Events Submitted!' : 'Event Submitted!')
-              : (specialForms.length > 1 ? 'Specials Submitted!' : 'Special Submitted!')
-            }
-          </h1>
-          <p className="text-muted-foreground mb-8">
-            {isAdmin 
-              ? `Your ${formType === 'event' 
-                  ? (eventForms.length > 1 ? 'events have' : 'event has')
-                  : (specialForms.length > 1 ? 'specials have' : 'special has')
-                } been published and ${formType === 'event'
-                  ? (eventForms.length > 1 ? 'are' : 'is')
-                  : (specialForms.length > 1 ? 'are' : 'is')
-                } now live on the site.`
-              : isOrganizer
-                ? `Your ${formType === 'event'
-                    ? (eventForms.length > 1 ? 'events have' : 'event has')
-                    : (specialForms.length > 1 ? 'specials have' : 'special has')
-                  } been submitted and will be reviewed shortly. ${formType === 'event'
-                    ? (eventForms.length > 1 ? 'They' : 'It')
-                    : (specialForms.length > 1 ? 'They' : 'It')
-                  } should appear on the site within a few hours.`
-                : `Thank you for submitting your ${formType === 'event'
-                    ? (eventForms.length > 1 ? 'events' : 'event')
-                    : (specialForms.length > 1 ? 'specials' : 'special')
-                  }. Our team will review ${formType === 'event'
-                    ? (eventForms.length > 1 ? 'them' : 'it')
-                    : (specialForms.length > 1 ? 'them' : 'it')
-                  } and ${formType === 'event'
-                    ? (eventForms.length > 1 ? 'they' : 'it')
-                    : (specialForms.length > 1 ? 'they' : 'it')
-                  } should appear on the site within 24 hours.`
-            }
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href="/"
-              className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium"
-            >
-              Back to Home
-            </Link>
-            <button
-              onClick={() => {
-                setIsSubmitted(false);
-                setFormType('select');
-                setEventForms([createEmptyForm()]);
-                setSpecialForms([createEmptySpecialForm()]);
-              }}
-              className="px-6 py-3 border border-border rounded-xl font-medium hover:bg-muted transition-colors"
-            >
-              Submit More
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Show initial selection screen
-  if (formType === 'select') {
-  return (
-    <div className="min-h-screen">
-      {/* Header */}
-      <section className="bg-gradient-to-br from-secondary to-primary/80 text-white py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h1 className="font-display text-4xl sm:text-5xl mb-4">
-              Submit to Kingston Happenings
-          </h1>
-          <p className="text-white/80 text-lg max-w-2xl">
-              Share your event or special with Kingston&apos;s community.
-            {isAdmin 
-                ? ' As an admin, your submissions will be published immediately.'
-                : isOrganizer
-                  ? ' As an organizer, your submissions will be reviewed and published quickly.'
-                  : ' Fill out the form and we\'ll review it within 24 hours.'
-              }
+      <div className="page-container pb-24 pt-12">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_400px]">
+          <div>
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-sun text-navy">
+              <Check size={26} strokeWidth={2.5} />
+            </div>
+            <p className="eyebrow mt-6">— {isVerified ? 'Published' : 'Submitted'}</p>
+            <h1 className="display-section mt-3">Thank you</h1>
+            <p className="mt-4 text-[18px] text-ink-muted">
+              {isVerified
+                ? `Your ${noun}${plural ? 's are' : ' is'} live now.`
+                : `We’ve got your ${noun}${plural ? 's' : ''} and will review ${plural ? 'them' : 'it'} soon!`}
             </p>
-          </div>
-        </section>
 
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <button
-              onClick={() => setFormType('event')}
-              className="group p-8 bg-card border-2 border-border rounded-2xl hover:border-primary hover:shadow-lg transition-all text-left"
-            >
-              <div className="w-16 h-16 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
-                <Calendar size={32} className="text-primary" />
-              </div>
-              <h2 className="font-display text-2xl text-foreground mb-2">Submit Event</h2>
-              <p className="text-muted-foreground">
-                Submit concerts, workshops, sports events, and more to the Kingston community calendar.
-              </p>
-            </button>
-
-            <button
-              onClick={() => setFormType('special')}
-              className="group p-8 bg-card border-2 border-border rounded-2xl hover:border-primary hover:shadow-lg transition-all text-left"
-            >
-              <div className="w-16 h-16 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
-                <Utensils size={32} className="text-primary" />
-              </div>
-              <h2 className="font-display text-2xl text-foreground mb-2">Submit Food & Drink Special</h2>
-              <p className="text-muted-foreground">
-                Share your restaurant or bar specials, happy hours, and food deals with hungry Kingstonians.
-              </p>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen">
-      {/* Header */}
-      <section className="bg-gradient-to-br from-secondary to-primary/80 text-white py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="font-display text-4xl sm:text-5xl mb-4">
-                {formType === 'event' 
-                  ? `Submit ${eventForms.length > 1 ? 'Events' : 'an Event'}`
-                  : `Submit ${specialForms.length > 1 ? 'Food & Drink Specials' : 'Food & Drink Special'}`
-                }
-              </h1>
-              <p className="text-white/80 text-lg max-w-2xl">
-                {formType === 'event'
-                  ? 'Share your event with Kingston\'s community.'
-                  : 'Share your food or drink special with Kingston\'s community.'
-                }
-                {isAdmin 
-                  ? ' As an admin, your submissions will be published immediately.'
-                  : isOrganizer
-                    ? ' As an organizer, your submissions will be reviewed and published quickly.'
-              : ' Fill out the form below and we\'ll review it within 24 hours.'
-            }
-          </p>
-            </div>
-            <button
-              onClick={() => {
-                setFormType('select');
-                setEventForms([createEmptyForm()]);
-                setSpecialForms([createEmptySpecialForm()]);
-                setError('');
-              }}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
-            >
-              ← Back
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {isAdmin && (
-          <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-8 flex items-start gap-3">
-            <CheckCircle size={20} className="text-green-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm text-green-800 font-medium">Admin Mode</p>
-              <p className="text-sm text-green-700">
-                Your submissions will be automatically approved and published.
-              </p>
-            </div>
-          </div>
-        )}
-        {isOrganizer && !isAdmin && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-8 flex items-start gap-3">
-            <CheckCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm text-blue-800 font-medium">Organizer Account</p>
-              <p className="text-sm text-blue-700">
-                Your submissions will be prioritized for review and typically published within a few hours.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Error Message */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
-            <AlertCircle size={20} />
-            <p className="text-sm">{error}</p>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Event Forms - only show when formType === 'event' */}
-          {formType === 'event' && eventForms.map((formData, formIndex) => (
-            <div key={formData.id} className="relative">
-              {eventForms.length > 1 && (
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-display text-2xl text-foreground">
-                    Event {formIndex + 1}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => removeEventForm(formData.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    <X size={16} />
-                    Remove
-                  </button>
-                </div>
-              )}
-
-              {/* Event Details */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <FileText size={20} className="text-primary" />
-                  Event Details
-                </h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label htmlFor={`title-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Event Title *
-                    </label>
-                    <input
-                      type="text"
-                      id={`title-${formData.id}`}
-                      required
-                      value={formData.title}
-                      onChange={(e) => updateForm(formData.id, { title: e.target.value })}
-                      placeholder="e.g., Trivia Night at The Ale House"
-                      className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label htmlFor={`description-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Description *
-                    </label>
-                    <textarea
-                      id={`description-${formData.id}`}
-                      required
-                      rows={4}
-                      maxLength={MAX_DESCRIPTION_LENGTH}
-                      value={formData.description}
-                      onChange={(e) => updateForm(formData.id, { description: e.target.value })}
-                      placeholder="Tell people what they can expect at your event..."
-                      className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary resize-none"
-                    />
-                    <div className="flex justify-end mt-1">
-                      <span className={`text-xs ${formData.description.length > MAX_DESCRIPTION_LENGTH * 0.9 ? 'text-amber-500' : 'text-muted-foreground'}`}>
-                        {formData.description.length}/{MAX_DESCRIPTION_LENGTH}
+            {!isVerified && (
+              <>
+                <p className="eyebrow-sm mt-10">What happens next</p>
+                <div className="card mt-3 px-5">
+                  {[
+                    ['We review it', 'Usually within 24 hours.'],
+                    ['It shows in My Events', 'Check its status anytime under Submitted.'],
+                    ['It goes live', `On Today, Browse and ${submitted.venueName ? `${submitted.venueName}’s` : 'the'} venue page.`],
+                  ].map(([t, d], i) => (
+                    <div key={t} className="flex items-center gap-4 border-b border-line py-4 last:border-b-0">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-navy text-[12px] font-bold text-white">
+                        {i + 1}
+                      </span>
+                      <span>
+                        <span className="block text-[15px] font-bold text-navy">{t}</span>
+                        <span className="block text-[12px] text-ink-muted">{d}</span>
                       </span>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              </section>
+              </>
+            )}
 
-              {/* Date & Time */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <Calendar size={20} className="text-primary" />
-                  Date & Time
-                </h3>
-                
-                {/* All Day toggle */}
-                <div className="mb-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.isAllDay}
-                      onChange={(e) => updateForm(formData.id, { 
-                        isAllDay: e.target.checked,
-                        startTime: e.target.checked ? '00:00' : '',
-                        endTime: ''
-                      })}
-                      className="w-4 h-4 text-primary rounded focus:ring-primary"
-                    />
-                    <span className="text-sm font-medium text-foreground">This is an all-day event</span>
-                  </label>
-                </div>
-                
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label htmlFor={`date-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Date *
-                    </label>
-                    <DatePicker
-                      id={`date-${formData.id}`}
-                      value={formData.date}
-                      onChange={(value) => updateForm(formData.id, { date: value })}
-                      required
-                      placeholder="Select date"
-                    />
-                  </div>
-
-                  {!formData.isAllDay && (
-                    <>
-                      <div>
-                        <label htmlFor={`startTime-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                          Start Time *
-                        </label>
-                        <div className="relative">
-                          <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
-                          <input
-                            type="time"
-                            id={`startTime-${formData.id}`}
-                            required
-                            value={formData.startTime}
-                            onChange={(e) => updateForm(formData.id, { startTime: e.target.value })}
-                            className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label htmlFor={`endTime-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                          End Time
-                        </label>
-                        <div className="relative">
-                          <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
-                          <input
-                            type="time"
-                            id={`endTime-${formData.id}`}
-                            value={formData.endTime}
-                            onChange={(e) => updateForm(formData.id, { endTime: e.target.value })}
-                            className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                          />
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Recurring Event Options */}
-                <div className="mt-6 pt-6 border-t border-border">
-                  <div className="flex items-center gap-3 mb-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.isRecurring}
-                        onChange={(e) => updateForm(formData.id, { 
-                          isRecurring: e.target.checked,
-                          recurrencePattern: e.target.checked ? 'weekly' : 'none',
-                          recurrenceEndDate: ''
-                        })}
-                        className="w-4 h-4 text-primary rounded focus:ring-primary"
-                      />
-                      <Repeat size={16} className="text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">This is a recurring event</span>
-                    </label>
-                  </div>
-
-                  {formData.isRecurring && (
-                    <div className="p-4 bg-muted/50 rounded-xl space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-foreground mb-2">
-                            Repeat Pattern
-                          </label>
-                          <select
-                            value={formData.recurrencePattern}
-                            onChange={(e) => updateForm(formData.id, { 
-                              recurrencePattern: e.target.value as RecurrencePattern,
-                              customDates: []
-                            })}
-                            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                          >
-                            <option value="weekly">Every week</option>
-                            <option value="biweekly">Every 2 weeks</option>
-                            <option value="monthly">Every month</option>
-                            <option value="custom">Multiple specific dates</option>
-                          </select>
-                          {formData.date && formData.recurrencePattern !== 'custom' && (
-                            <p className="text-xs text-muted-foreground mt-2">
-                              Every {formData.recurrencePattern === 'monthly' ? 'month' : ''} {dayNames[new Date(formData.date + 'T12:00:00').getDay()]}
-                              {formData.recurrencePattern === 'biweekly' ? ' (every 2 weeks)' : ''}
-                            </p>
-                          )}
-                        </div>
-                        {formData.recurrencePattern !== 'custom' && (
-                          <div ref={registerFieldRef(`recurrenceEndDate-${formData.id}`)}>
-                            <label className="block text-sm font-medium text-foreground mb-2">
-                              Until{formData.recurrencePattern === 'weekly' ? ' *' : ''}
-                            </label>
-                            <DatePicker
-                              value={formData.recurrenceEndDate}
-                              onChange={(value) => updateForm(formData.id, { recurrenceEndDate: value })}
-                              min={formData.date}
-                              max={formData.recurrencePattern === 'weekly' && formData.date ? (() => {
-                                try {
-                                  const startDate = parseISO(formData.date);
-                                  return format(addDays(startDate, 52 * 7), 'yyyy-MM-dd');
-                                } catch {
-                                  return undefined;
-                                }
-                              })() : undefined}
-                              required={formData.recurrencePattern === 'weekly'}
-                              placeholder={formData.recurrencePattern === 'weekly' ? 'Select end date (required, max 52 weeks)' : 'Select end date'}
-                            />
-                            <p className="text-xs text-muted-foreground mt-2">
-                              {formData.recurrencePattern === 'weekly' 
-                                ? 'Required. Maximum duration is 52 weeks from the start date.'
-                                : 'Leave empty for no end date (max 52 weeks)'}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* Custom dates picker */}
-                      {formData.recurrencePattern === 'custom' && (
-                        <div>
-                          <label className="block text-sm font-medium text-foreground mb-2">
-                            Select Additional Dates
-                          </label>
-                          <div className="flex flex-wrap gap-2 mb-3">
-                            {formData.customDates.map((date, idx) => (
-                              <span
-                                key={idx}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary text-sm rounded-lg"
-                              >
-                                {new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                                <button
-                                  type="button"
-                                  onClick={() => updateForm(formData.id, { 
-                                    customDates: formData.customDates.filter((_, i) => i !== idx)
-                                  })}
-                                  className="hover:text-red-500"
-                                >
-                                  <X size={14} />
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                          <DatePicker
-                            value=""
-                            onChange={(value) => {
-                              if (value && !formData.customDates.includes(value)) {
-                                updateForm(formData.id, { 
-                                  customDates: [...formData.customDates, value].sort()
-                                });
-                              }
-                            }}
-                            min={formData.date}
-                            placeholder="Click to add date"
-                          />
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Click dates to add them. The first date is set above.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* Location */}
-              <section
-                ref={registerFieldRef(`venue-${formData.id}`)}
-                className="bg-card border border-border rounded-xl p-6 mb-6"
+            <div className="mt-8 flex flex-wrap gap-3">
+              <button
+                onClick={() => {
+                  setSubmitted(null);
+                  resetForms();
+                }}
+                className="btn-sun"
               >
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <MapPin size={20} className="text-primary" />
-                  Location
-                </h3>
-                
-                <VenueSelector
-                  venues={venues}
-                  selectedVenueId={formData.venueId}
-                  newVenueName={formData.newVenueName}
-                  newVenueAddress={formData.newVenueAddress}
-                  onVenueSelect={(venueId) => updateForm(formData.id, { venueId })}
-                  onNewVenueNameChange={(name) => updateForm(formData.id, { newVenueName: name })}
-                  onNewVenueAddressChange={(address) => updateForm(formData.id, { newVenueAddress: address })}
-                  required
-                  id={`venue-${formData.id}`}
-                />
-              </section>
+                Submit another
+              </button>
+              <Link href="/my-events?tab=submitted" className="btn-outline">
+                Go to My Events
+              </Link>
+            </div>
+          </div>
 
-              {/* Categories */}
-              <section
-                ref={registerFieldRef(`categories-${formData.id}`)}
-                className="bg-card border border-border rounded-xl p-6 mb-6"
-              >
-                <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
-                  <Tag size={20} className="text-primary" />
-                  Categories *
-                </h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Select all that apply (at least one required)
+          <div>
+            <p className="eyebrow-sm">Your submission{plural ? 's' : ''}</p>
+            <div className="card mt-3 p-5">
+              <div className="flex flex-wrap gap-1.5">
+                {submitted.tags.map((t) => (
+                  <Tag key={t.label} className={t.className}>
+                    {t.label}
+                  </Tag>
+                ))}
+                {isVerified ? (
+                  <Tag className="bg-success-tint text-success gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live now
+                  </Tag>
+                ) : (
+                  <Tag className="bg-[#fff1d6] text-[#8a5a00] gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-sun" /> In review
+                  </Tag>
+                )}
+              </div>
+              <p className="mt-3 text-[20px] font-bold text-navy">{submitted.title}</p>
+              <ul className="mt-3 flex flex-col gap-2 text-[13px] text-ink-muted">
+                {submitted.venueName && (
+                  <li className="flex items-center gap-2">
+                    <MapPin size={14} className="text-link" />
+                    {submitted.venueName}
+                  </li>
+                )}
+                <li className="flex items-center gap-2">
+                  <Calendar size={14} className="text-link" />
+                  {submitted.when}
+                </li>
+                <li className="flex items-center gap-2">
+                  <Clock size={14} className="text-link" />
+                  {submitted.time}
+                </li>
+              </ul>
+              {plural && (
+                <p className="mt-3 text-[12px] text-ink-muted">
+                  + {submitted.count - 1} more {noun}
+                  {submitted.count - 1 > 1 ? 's' : ''}
                 </p>
-                
-                <div className="flex flex-wrap gap-2">
-                  {browseCategories.map((category) => {
-                    const isSelected = formData.categories.includes(category);
-                    return (
-                      <button
-                        key={category}
-                        type="button"
-                        onClick={() => handleCategoryToggle(formData.id, category)}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                          isSelected
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted text-muted-foreground hover:bg-border'
-                        }`}
-                      >
-                        {categoryLabels[category]}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
+              )}
+              <div className="mt-4 flex items-center justify-between border-t border-line pt-3 text-[12px]">
+                <span className="text-ink-muted">Submitted {format(submitted.submittedAt, 'MMM d, yyyy · h:mm a')}</span>
+                {isVerified && submitted.eventId ? (
+                  <Link href={`/events/${submitted.eventId}`} className="font-medium text-link hover:underline">
+                    View it live →
+                  </Link>
+                ) : submitted.eventId ? (
+                  <Link href={`/events/${submitted.eventId}/edit`} className="font-medium text-link hover:underline">
+                    Edit submission
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-              {/* Additional Info */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <DollarSign size={20} className="text-primary" />
-                  Additional Information
-                </h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-3">
-                      Price / Admission
-                    </label>
-                    <div className="flex flex-wrap gap-3 mb-3">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`priceType-${formData.id}`}
-                          value="na"
-                          checked={formData.priceType === 'na'}
-                          onChange={() => updateForm(formData.id, { priceType: 'na', priceAmount: '' })}
-                          className="w-4 h-4 text-primary focus:ring-primary"
-                        />
-                        <span className="text-sm text-foreground">N/A</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`priceType-${formData.id}`}
-                          value="free"
-                          checked={formData.priceType === 'free'}
-                          onChange={() => updateForm(formData.id, { priceType: 'free', priceAmount: '' })}
-                          className="w-4 h-4 text-primary focus:ring-primary"
-                        />
-                        <span className="text-sm text-foreground">Free</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`priceType-${formData.id}`}
-                          value="amount"
-                          checked={formData.priceType === 'amount'}
-                          onChange={() => updateForm(formData.id, { priceType: 'amount' })}
-                          className="w-4 h-4 text-primary focus:ring-primary"
-                        />
-                        <span className="text-sm text-foreground">Paid</span>
-                      </label>
-                    </div>
-                    {formData.priceType === 'amount' && (
-                      <input
-                          type="text"
-                          id={`priceAmount-${formData.id}`}
-                          value={formData.priceAmount}
-                          onChange={(e) => updateForm(formData.id, { priceAmount: e.target.value })}
-                          placeholder="e.g., 15, 20-40"
-                          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                        />
-                    )}
-                  </div>
+  /* ---------- Form ---------- */
+  const isEvent = formType === 'event';
 
-                  <div>
-                    <label htmlFor={`ticketUrl-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Ticket / Registration Link
-                    </label>
-                    <div className="relative">
-                      <LinkIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        type="text"
-                        id={`ticketUrl-${formData.id}`}
-                        value={formData.ticketUrl}
-                        onChange={(e) => updateForm(formData.id, { ticketUrl: e.target.value })}
-                        placeholder="e.g., ticketmaster.com/event/abc"
-                        className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      You can enter the link with or without https://
-                    </p>
-                  </div>
+  return (
+    <div className="page-container pb-24 pt-10">
+      <p className="eyebrow mb-3.5">— Submit</p>
+      <h1 className="display-section">
+        {isEvent ? (
+          <>
+            Share what&rsquo;s
+            <br />
+            happening
+          </>
+        ) : (
+          <>
+            Share a
+            <br />
+            special
+          </>
+        )}
+      </h1>
+      <p className="mt-3.5 text-[14px] text-ink-muted">
+        {isEvent ? 'Posting a food & drink special instead?' : 'Posting an event instead?'}{' '}
+        <Link href={`/submit?type=${isEvent ? 'special' : 'event'}`} className="font-medium text-link hover:underline">
+          Switch →
+        </Link>
+      </p>
 
-                  {/* Image Upload */}
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Event Image
-                    </label>
-                    
-                    {formData.imagePreview ? (
-                      <div className="relative rounded-xl overflow-hidden">
-                        <img
-                          src={formData.imagePreview}
-                          alt="Event preview"
-                          className="w-full h-48 object-cover"
-                        />
+      {(isOrganizerRole || isAdmin) && (
+        <OrganizerBanner name={user.name} isVerified={isVerified} requestedAt={verificationRequestedAt} />
+      )}
+
+      {error && (
+        <div className="mt-6 flex items-start gap-3 rounded-[14px] bg-danger-tint p-4 text-[14px] text-danger">
+          <AlertCircle size={18} className="mt-0.5 shrink-0" />
+          <p>{error}</p>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="mt-6 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_360px]">
+        <div className="flex min-w-0 flex-col gap-5">
+          {isEvent
+            ? eventForms.map((formData, formIndex) => {
+                const pickedCount = formData.categories.filter((c) => c !== '19plus').length;
+                const showPrice = formData.priceType === 'paid' || formData.priceType === 'cover';
+                return (
+                  <div key={formData.id} className="flex flex-col gap-5">
+                    {eventForms.length > 1 && (
+                      <div className="flex items-center justify-between pt-2">
+                        <p className="text-[22px] font-bold text-navy">Event {formIndex + 1}</p>
                         <button
                           type="button"
-                          onClick={() => removeImage(formData.id)}
-                          className="absolute top-2 right-2 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors"
+                          onClick={() => setEventForms((prev) => prev.filter((f) => f.id !== formData.id))}
+                          className="flex items-center gap-1 text-[13px] font-medium text-danger hover:underline"
                         >
-                          <X size={16} />
+                          <X size={14} /> Remove
                         </button>
                       </div>
-                    ) : (
-                      <div
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => handleImageDrop(formData.id, e)}
-                        onClick={() => fileInputRefs.current[formData.id]?.click()}
-                        className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
-                      >
-                        <Upload size={32} className="mx-auto text-muted-foreground mb-3" />
-                        <p className="text-sm text-foreground font-medium mb-1">
-                          Drop an image here or click to upload
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          PNG, JPG, GIF up to 5MB. Recommended: 800x600px
-                        </p>
-                      </div>
                     )}
-                    
-                    <input
-                      type="file"
-                      ref={(el) => { fileInputRefs.current[formData.id] = el; }}
-                      onChange={(e) => handleFileInputChange(formData.id, e)}
-                      accept="image/*"
-                      className="hidden"
-                    />
-                  </div>
-                </div>
-              </section>
 
-              {formIndex < eventForms.length - 1 && (
-                <div className="border-b-2 border-dashed border-border my-8" />
-              )}
-            </div>
-          ))}
-
-          {/* Food & Drink Special Forms */}
-          {formType === 'special' && specialForms.map((formData, formIndex) => (
-            <div key={formData.id} className="relative">
-              {specialForms.length > 1 && (
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-display text-2xl text-foreground">
-                    Special {formIndex + 1}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => removeSpecialForm(formData.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    <X size={16} />
-                    Remove
-                  </button>
-                </div>
-              )}
-
-              {/* Special Details */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <Utensils size={20} className="text-primary" />
-                  Special Details
-                </h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label htmlFor={`special-title-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Special Title *
-                    </label>
-                    <input
-                      type="text"
-                      id={`special-title-${formData.id}`}
-                      required
-                      value={formData.title}
-                      onChange={(e) => updateSpecialForm(formData.id, { title: e.target.value })}
-                      placeholder="e.g., Half-Price Wings Wednesday"
-                      className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label htmlFor={`special-description-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Description *
-                    </label>
-                    <textarea
-                      id={`special-description-${formData.id}`}
-                      required
-                      rows={4}
-                      maxLength={MAX_DESCRIPTION_LENGTH}
-                      value={formData.description}
-                      onChange={(e) => updateSpecialForm(formData.id, { description: e.target.value })}
-                      placeholder="Describe your special, including any restrictions or details..."
-                      className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary resize-none"
-                    />
-                    <div className="flex justify-end mt-1">
-                      <span className={`text-xs ${formData.description.length > MAX_DESCRIPTION_LENGTH * 0.9 ? 'text-amber-500' : 'text-muted-foreground'}`}>
-                        {formData.description.length}/{MAX_DESCRIPTION_LENGTH}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Date & Time */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <Calendar size={20} className="text-primary" />
-                  Date & Time
-                </h3>
-                
-                <div className="mb-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.isAllDay}
-                      onChange={(e) => updateSpecialForm(formData.id, { 
-                        isAllDay: e.target.checked,
-                        startTime: e.target.checked ? '00:00' : '',
-                        endTime: ''
-                      })}
-                      className="w-4 h-4 text-primary rounded focus:ring-primary"
-                    />
-                    <span className="text-sm font-medium text-foreground">This is an all-day special</span>
-                  </label>
-                </div>
-                
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label htmlFor={`special-date-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                      Date *
-                    </label>
-                    <DatePicker
-                      id={`special-date-${formData.id}`}
-                      value={formData.date}
-                      onChange={(value) => updateSpecialForm(formData.id, { date: value })}
-                      required
-                      placeholder="Select date"
-                    />
-                  </div>
-
-                  {!formData.isAllDay && (
-                    <>
+                    <Section number={1} title="Event details">
                       <div>
-                        <label htmlFor={`special-startTime-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                          Start Time *
+                        <label htmlFor={`title-${formData.id}`} className="field-label">
+                          Event title
                         </label>
-                        <div className="relative">
-                          <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
-                          <input
-                            type="time"
-                            id={`special-startTime-${formData.id}`}
-                            required
-                            value={formData.startTime}
-                            onChange={(e) => updateSpecialForm(formData.id, { startTime: e.target.value })}
-                            className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                          />
-                        </div>
+                        <input
+                          id={`title-${formData.id}`}
+                          required
+                          maxLength={LIMITS.eventTitle}
+                          value={formData.title}
+                          onChange={(e) => updateForm(formData.id, { title: e.target.value })}
+                          placeholder="e.g., Trivia Night at The Ale House"
+                          className="field"
+                        />
+                        <Helper length={formData.title.length} max={LIMITS.eventTitle} />
                       </div>
-
                       <div>
-                        <label htmlFor={`special-endTime-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                          End Time
+                        <label htmlFor={`summary-${formData.id}`} className="field-label">
+                          Short summary
                         </label>
-                        <div className="relative">
-                          <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
-                          <input
-                            type="time"
-                            id={`special-endTime-${formData.id}`}
-                            value={formData.endTime}
-                            onChange={(e) => updateSpecialForm(formData.id, { endTime: e.target.value })}
-                            className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                          />
-                        </div>
+                        <input
+                          id={`summary-${formData.id}`}
+                          required
+                          maxLength={LIMITS.summary}
+                          value={formData.summary}
+                          onChange={(e) => updateForm(formData.id, { summary: e.target.value })}
+                          placeholder="e.g., Teams of up to six, prizes for the top three, half-price nachos"
+                          className="field"
+                        />
+                        <Helper
+                          hint="One line that shows on the Browse page and event previews."
+                          length={formData.summary.length}
+                          max={LIMITS.summary}
+                        />
                       </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Recurring Special Options */}
-                <div className="mt-6 pt-6 border-t border-border">
-                  <div className="flex items-center gap-3 mb-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.isRecurring}
-                        onChange={(e) => updateSpecialForm(formData.id, { 
-                          isRecurring: e.target.checked,
-                          recurrencePattern: e.target.checked ? 'weekly' : 'none',
-                          recurrenceEndDate: '',
-                          recurringDays: []
-                        })}
-                        className="w-4 h-4 text-primary rounded focus:ring-primary"
-                      />
-                      <Repeat size={16} className="text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">This is a recurring special</span>
-                    </label>
-                  </div>
-
-                  {formData.isRecurring && (
-                    <div className="p-4 bg-muted/50 rounded-xl space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-foreground mb-2">
-                          Recurrence Type
+                        <label htmlFor={`description-${formData.id}`} className="field-label">
+                          Description
                         </label>
-                        <div className="space-y-2">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              name={`recurrence-type-${formData.id}`}
-                              checked={formData.recurrencePattern === 'weekly'}
-                              onChange={() => updateSpecialForm(formData.id, { 
-                                recurrencePattern: 'weekly',
-                                recurringDays: []
-                              })}
-                              className="w-4 h-4 text-primary focus:ring-primary"
-                            />
-                            <span className="text-sm text-foreground">Weekly (same day each week)</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              name={`recurrence-type-${formData.id}`}
-                              checked={formData.recurrencePattern === 'days'}
-                              onChange={() => updateSpecialForm(formData.id, { 
-                                recurrencePattern: 'days',
-                                recurrenceEndDate: ''
-                              })}
-                              className="w-4 h-4 text-primary focus:ring-primary"
-                            />
-                            <span className="text-sm text-foreground">Select specific days of the week</span>
-                          </label>
-                        </div>
+                        <textarea
+                          id={`description-${formData.id}`}
+                          required
+                          rows={4}
+                          maxLength={LIMITS.description}
+                          value={formData.description}
+                          onChange={(e) => updateForm(formData.id, { description: e.target.value })}
+                          placeholder="Tell people what they can expect at your event..."
+                          className="field"
+                        />
+                        <Helper length={formData.description.length} max={LIMITS.description} />
                       </div>
+                    </Section>
 
-                      {formData.recurrencePattern === 'weekly' && (
-                        <div ref={registerFieldRef(`special-recurrenceEndDate-${formData.id}`)}>
-                          <label className="block text-sm font-medium text-foreground mb-2">
-                            Until *
+                    <Section number={2} title="Date & time">
+                      <div className={`grid grid-cols-1 gap-4 ${formData.isAllDay ? '' : 'sm:grid-cols-3'}`}>
+                        <div ref={registerFieldRef(`date-${formData.id}`)}>
+                          <label htmlFor={`date-${formData.id}`} className="field-label">
+                            Date
                           </label>
                           <DatePicker
-                            value={formData.recurrenceEndDate}
-                            onChange={(value) => updateSpecialForm(formData.id, { recurrenceEndDate: value })}
-                            min={formData.date}
-                            max={formData.date ? (() => {
-                              try {
-                                const startDate = parseISO(formData.date);
-                                return format(addDays(startDate, 52 * 7), 'yyyy-MM-dd');
-                              } catch {
-                                return undefined;
-                              }
-                            })() : undefined}
+                            id={`date-${formData.id}`}
+                            value={formData.date}
+                            onChange={(value) => updateForm(formData.id, { date: value })}
                             required
-                            placeholder="Select end date (required, max 52 weeks)"
+                            placeholder="Select date"
                           />
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Required. Maximum duration is 52 weeks from the start date.
-                          </p>
                         </div>
-                      )}
-
-                      {formData.recurrencePattern === 'days' && (
-                        <div>
-                          <label className="block text-sm font-medium text-foreground mb-2">
-                            Select Days
-                          </label>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {dayNames.map((day) => (
-                              <label key={day} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-muted transition-colors">
-                                <input
-                                  type="checkbox"
-                                  checked={formData.recurringDays.includes(day)}
-                                  onChange={(e) => {
-                                    const newDays = e.target.checked
-                                      ? [...formData.recurringDays, day]
-                                      : formData.recurringDays.filter(d => d !== day);
-                                    updateSpecialForm(formData.id, { recurringDays: newDays });
-                                  }}
-                                  className="w-4 h-4 text-primary rounded focus:ring-primary"
-                                />
-                                <span className="text-sm text-foreground">{day}</span>
+                        {!formData.isAllDay && (
+                          <>
+                            <div>
+                              <label htmlFor={`startTime-${formData.id}`} className="field-label">
+                                Start time
                               </label>
-                            ))}
-                          </div>
-                          {formData.recurringDays.length > 0 && (
-                            <div className="mt-4">
-                              <label className="block text-sm font-medium text-foreground mb-2">
-                                Until
-                              </label>
-                              <input
-                                type="date"
-                                value={formData.recurrenceEndDate}
-                                onChange={(e) => updateSpecialForm(formData.id, { recurrenceEndDate: e.target.value })}
-                                min={formData.date}
-                                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                              <TimeInput
+                                id={`startTime-${formData.id}`}
+                                required
+                                value={formData.startTime}
+                                onChange={(v) => updateForm(formData.id, { startTime: v })}
                               />
-                              <p className="text-xs text-muted-foreground mt-2">
-                                Leave empty for no end date (max 52 weeks)
+                            </div>
+                            <div>
+                              <label htmlFor={`endTime-${formData.id}`} className="field-label">
+                                End time
+                              </label>
+                              <TimeInput
+                                id={`endTime-${formData.id}`}
+                                value={formData.endTime}
+                                onChange={(v) => updateForm(formData.id, { endTime: v })}
+                              />
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      <Toggle
+                        on={formData.isAllDay}
+                        onChange={(v) => updateForm(formData.id, { isAllDay: v, startTime: v ? '00:00' : '', endTime: '' })}
+                        label="This is an all-day event"
+                      />
+                      <Toggle
+                        on={formData.isRecurring}
+                        onChange={(v) =>
+                          updateForm(formData.id, { isRecurring: v, recurrencePattern: 'weekly', recurrenceEndDate: '', customDates: [] })
+                        }
+                        label="This is a recurring event"
+                      />
+                      {formData.isRecurring && (
+                        <div className="flex flex-col gap-4 sm:pl-[52px]">
+                          <ChipGroup
+                            value={formData.recurrencePattern}
+                            onChange={(v) => updateForm(formData.id, { recurrencePattern: v, customDates: [], recurrenceEndDate: '' })}
+                            options={[
+                              { id: 'weekly', label: 'Every week' },
+                              { id: 'monthly', label: 'Every month' },
+                              { id: 'custom', label: 'Multiple specific dates' },
+                            ]}
+                          />
+                          {formData.date && formData.recurrencePattern !== 'custom' && (
+                            <p className="field-hint">
+                              Repeats {formData.recurrencePattern === 'monthly' ? 'monthly on' : 'every'}{' '}
+                              {dayNames[parseISO(formData.date).getDay()]}
+                            </p>
+                          )}
+                          {formData.recurrencePattern !== 'custom' ? (
+                            <div ref={registerFieldRef(`recurrenceEndDate-${formData.id}`)} className="sm:max-w-[403px]">
+                              <label className="field-label">Until{formData.recurrencePattern === 'weekly' ? '' : ' (optional)'}</label>
+                              <DatePicker
+                                value={formData.recurrenceEndDate}
+                                onChange={(value) => updateForm(formData.id, { recurrenceEndDate: value })}
+                                min={formData.date}
+                                max={
+                                  formData.recurrencePattern === 'weekly' && formData.date
+                                    ? format(addDays(parseISO(formData.date), 52 * 7), 'yyyy-MM-dd')
+                                    : undefined
+                                }
+                                required={formData.recurrencePattern === 'weekly'}
+                                placeholder="Pick an end date"
+                              />
+                              <p className="field-hint mt-1.5">
+                                {formData.recurrencePattern === 'weekly'
+                                  ? 'Required. Up to 52 weeks from the start date.'
+                                  : 'Leave empty for no end date (max 52 weeks).'}
                               </p>
+                            </div>
+                          ) : (
+                            <div ref={registerFieldRef(`customDates-${formData.id}`)}>
+                              <label className="field-label">Other dates</label>
+                              <DateList
+                                dates={formData.customDates}
+                                onChange={(customDates) => updateForm(formData.id, { customDates })}
+                                min={formData.date}
+                                placeholder="Click to add a date"
+                              />
+                              <p className="field-hint mt-1.5">The first date is set above.</p>
                             </div>
                           )}
                         </div>
                       )}
+                    </Section>
+
+                    <Section number={3} title="Location" sectionRef={registerFieldRef(`venue-${formData.id}`)}>
+                      <LocationFields
+                        idPrefix="venue"
+                        form={formData}
+                        update={(updates) => updateForm(formData.id, updates)}
+                        venues={venues}
+                        organizerVenues={organizerVenues}
+                        linkedVenueIds={organizerVenueIds}
+                        application={application}
+                        noun="event"
+                      />
+                      {canAddPhoto(formData.venueId) && (
+                        <PhotoField
+                          preview={formData.imagePreview}
+                          onSelect={async (file) => updateForm(formData.id, { imagePreview: await compressImage(file) })}
+                          onRemove={() => updateForm(formData.id, { imagePreview: '' })}
+                        />
+                      )}
+                    </Section>
+
+                    <Section number={4} title="Categories" sectionRef={registerFieldRef(`categories-${formData.id}`)}>
+                      <div>
+                        <p className="mb-5 text-[14px] text-ink-muted">Pick up to {MAX_CATEGORIES} that fit best.</p>
+                        <div className="flex flex-wrap gap-2">
+                          {eventCategoryOptions.map((category) => {
+                            const selected = formData.categories.includes(category);
+                            const atLimit = !selected && category !== '19plus' && pickedCount >= MAX_CATEGORIES;
+                            return (
+                              <button
+                                key={category}
+                                type="button"
+                                onClick={() => handleCategoryToggle(formData.id, category)}
+                                aria-pressed={selected}
+                                disabled={atLimit}
+                                className={`inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                                  selected ? `${categoryTagStyles[category]} font-bold` : 'border border-line bg-white text-navy hover:border-navy'
+                                }`}
+                              >
+                                {selected && <Check size={14} strokeWidth={3} />}
+                                {categoryLabels[category]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="field-label mb-1">Age limit</p>
+                        <p className="field-hint mb-3">Who can come? Shown as a label on the listing.</p>
+                        <ChipGroup
+                          value={formData.categories.includes('19plus') ? '19' : 'all'}
+                          onChange={(v) =>
+                            updateForm(formData.id, {
+                              categories:
+                                v === '19'
+                                  ? [...formData.categories.filter((c) => c !== '19plus'), '19plus']
+                                  : formData.categories.filter((c) => c !== '19plus'),
+                            })
+                          }
+                          options={[
+                            { id: 'all', label: 'All ages' },
+                            { id: '19', label: '19+' },
+                          ]}
+                        />
+                      </div>
+                    </Section>
+
+                    <Section number={5} title="Pricing & tickets">
+                      <div className="flex flex-wrap gap-2">
+                        {(
+                          [
+                            ['free', 'Free'],
+                            ['paid', 'Paid'],
+                            ['pwyc', 'Pay what you can'],
+                            ['cover', 'Cover at the door'],
+                            ['free-rsvp', 'Free with RSVP'],
+                          ] as [PriceType, string][]
+                        ).map(([id, label]) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className="chip"
+                            data-active={formData.priceType === id}
+                            onClick={() =>
+                              updateForm(formData.id, {
+                                priceType: formData.priceType === id ? '' : id,
+                                ...(id === 'paid' || id === 'cover' ? {} : { priceAmount: '', priceTiers: [] }),
+                                ...(id === 'free-rsvp' ? { rsvpRequired: true } : {}),
+                              })
+                            }
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className={`grid grid-cols-1 gap-4 ${showPrice ? 'sm:grid-cols-2' : ''}`}>
+                        {showPrice && (
+                          <div>
+                            <label htmlFor={`priceAmount-${formData.id}`} className="field-label">
+                              Price ($)
+                            </label>
+                            <input
+                              id={`priceAmount-${formData.id}`}
+                              value={formData.priceAmount}
+                              onChange={(e) => updateForm(formData.id, { priceAmount: e.target.value })}
+                              placeholder="e.g., 15, 20-40"
+                              className="field"
+                            />
+                          </div>
+                        )}
+                        <div>
+                          <label htmlFor={`ticketUrl-${formData.id}`} className="field-label">
+                            Ticket link (optional)
+                          </label>
+                          <div className="relative">
+                            <LinkIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-link" />
+                            <input
+                              id={`ticketUrl-${formData.id}`}
+                              value={formData.ticketUrl}
+                              onChange={(e) => updateForm(formData.id, { ticketUrl: e.target.value })}
+                              placeholder="e.g., ticketmaster.com/event/abc"
+                              className="field field-with-icon"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      {formData.priceType === 'paid' && (
+                        <div className="flex flex-col gap-3">
+                          {formData.priceTiers.map((tier) => {
+                            const setTier = (updates: Partial<PriceTier>) =>
+                              updateForm(formData.id, {
+                                priceTiers: formData.priceTiers.map((t) => (t.id === tier.id ? { ...t, ...updates } : t)),
+                              });
+                            return (
+                              <div key={tier.id} className="flex items-center gap-3">
+                                <input
+                                  value={tier.label}
+                                  onChange={(e) => setTier({ label: e.target.value })}
+                                  placeholder="e.g., VIP"
+                                  aria-label="Price name"
+                                  className="field"
+                                />
+                                <input
+                                  value={tier.amount}
+                                  onChange={(e) => setTier({ amount: e.target.value })}
+                                  placeholder="e.g., 40"
+                                  aria-label="Price ($)"
+                                  className="field"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateForm(formData.id, { priceTiers: formData.priceTiers.filter((t) => t.id !== tier.id) })
+                                  }
+                                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ink-muted hover:bg-sky-soft hover:text-navy"
+                                  aria-label="Remove price"
+                                >
+                                  <X size={15} />
+                                </button>
+                              </div>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateForm(formData.id, {
+                                priceTiers: [...formData.priceTiers, { id: generateId(), label: '', amount: '' }],
+                              })
+                            }
+                            className="self-start text-[13px] font-medium text-link hover:underline"
+                          >
+                            + Add another price (e.g., General $20 · VIP $40)
+                          </button>
+                        </div>
+                      )}
+                      <div className="h-px bg-line" />
+                      <div className="flex flex-col gap-2">
+                        <Toggle
+                          on={formData.rsvpRequired}
+                          onChange={(v) => updateForm(formData.id, { rsvpRequired: v, ...(v ? {} : { rsvpUrl: '' }) })}
+                          label="RSVP or registration required"
+                          hint="People need to sign up before coming."
+                        />
+                        {formData.rsvpRequired && (
+                          <div className="mt-2 sm:pl-[52px]">
+                            <label htmlFor={`rsvpUrl-${formData.id}`} className="field-label">
+                              RSVP / registration link
+                            </label>
+                            <div className="relative">
+                              <LinkIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-link" />
+                              <input
+                                id={`rsvpUrl-${formData.id}`}
+                                value={formData.rsvpUrl}
+                                onChange={(e) => updateForm(formData.id, { rsvpUrl: e.target.value })}
+                                placeholder="e.g., eventbrite.ca/e/trivia-night"
+                                className="field field-with-icon"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <Toggle
+                        on={formData.soldOut}
+                        onChange={(v) => updateForm(formData.id, { soldOut: v })}
+                        label="Sold out"
+                        hint="Keeps the listing up with a “Sold out” label."
+                      />
+                    </Section>
+                  </div>
+                );
+              })
+            : specialForms.map((formData, formIndex) => (
+                <div key={formData.id} className="flex flex-col gap-5">
+                  {specialForms.length > 1 && (
+                    <div className="flex items-center justify-between pt-2">
+                      <p className="text-[22px] font-bold text-navy">Special {formIndex + 1}</p>
+                      <button
+                        type="button"
+                        onClick={() => setSpecialForms((prev) => prev.filter((f) => f.id !== formData.id))}
+                        className="flex items-center gap-1 text-[13px] font-medium text-danger hover:underline"
+                      >
+                        <X size={14} /> Remove
+                      </button>
                     </div>
                   )}
+
+                  <Section number={1} title="The deal">
+                    <div>
+                      <label htmlFor={`special-title-${formData.id}`} className="field-label">
+                        Special name
+                      </label>
+                      <input
+                        id={`special-title-${formData.id}`}
+                        required
+                        maxLength={LIMITS.specialName}
+                        value={formData.title}
+                        onChange={(e) => updateSpecialForm(formData.id, { title: e.target.value })}
+                        placeholder="e.g., Half-Price Wings"
+                        className="field"
+                      />
+                      <Helper
+                        hint="Recommended: include the price or discount and keep it concise."
+                        length={formData.title.length}
+                        max={LIMITS.specialName}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor={`special-deal-${formData.id}`} className="field-label">
+                        The deal
+                      </label>
+                      <input
+                        id={`special-deal-${formData.id}`}
+                        maxLength={LIMITS.deal}
+                        value={formData.deal}
+                        onChange={(e) => updateSpecialForm(formData.id, { deal: e.target.value })}
+                        placeholder="e.g., $5 pints · Half-price wings · $12 burger & pint"
+                        className="field"
+                      />
+                      <Helper length={formData.deal.length} max={LIMITS.deal} />
+                    </div>
+                    <div>
+                      <label htmlFor={`special-summary-${formData.id}`} className="field-label">
+                        Short summary
+                      </label>
+                      <input
+                        id={`special-summary-${formData.id}`}
+                        required
+                        maxLength={LIMITS.summary}
+                        value={formData.summary}
+                        onChange={(e) => updateSpecialForm(formData.id, { summary: e.target.value })}
+                        placeholder="e.g., All sauces and dry rubs, dine-in only"
+                        className="field"
+                      />
+                      <Helper
+                        hint="One line that shows on the Browse page and previews."
+                        length={formData.summary.length}
+                        max={LIMITS.summary}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor={`special-description-${formData.id}`} className="field-label">
+                        Description (optional)
+                      </label>
+                      <textarea
+                        id={`special-description-${formData.id}`}
+                        rows={3}
+                        maxLength={LIMITS.description}
+                        value={formData.description}
+                        onChange={(e) => updateSpecialForm(formData.id, { description: e.target.value })}
+                        placeholder="Anything else people should know - what’s included, how to order etc."
+                        className="field"
+                      />
+                      <Helper length={formData.description.length} max={LIMITS.description} />
+                    </div>
+                    <div>
+                      <p className="field-label">Type</p>
+                      <ChipGroup
+                        value={formData.type}
+                        onChange={(type) => updateSpecialForm(formData.id, { type })}
+                        options={(Object.keys(specialTypeLabels) as SpecialType[]).map((id) => ({ id, label: specialTypeLabels[id] }))}
+                      />
+                    </div>
+                  </Section>
+
+                  <Section number={2} title="When it runs">
+                    <div>
+                      <p className="field-label">How often?</p>
+                      <ChipGroup
+                        value={formData.frequency}
+                        onChange={(frequency) =>
+                          updateSpecialForm(formData.id, { frequency, recurrenceEndDate: '', specificDates: [], recurringDays: [] })
+                        }
+                        options={[
+                          { id: 'weekly', label: 'Every week' },
+                          { id: 'once', label: 'One day only' },
+                          { id: 'dates', label: 'Specific dates' },
+                        ]}
+                      />
+                    </div>
+                    {formData.frequency === 'weekly' && (
+                      <div ref={registerFieldRef(`special-days-${formData.id}`)}>
+                        <p className="field-label mb-1">Which days?</p>
+                        <p className="field-hint mb-3">Pick every day the special runs.</p>
+                        <div className="flex flex-wrap gap-2">
+                          {weekOrder.map((d) => {
+                            const active = formData.recurringDays.includes(d);
+                            return (
+                              <button
+                                key={d}
+                                type="button"
+                                className="chip"
+                                data-active={active}
+                                onClick={() =>
+                                  updateSpecialForm(formData.id, {
+                                    recurringDays: active
+                                      ? formData.recurringDays.filter((x) => x !== d)
+                                      : [...formData.recurringDays, d],
+                                  })
+                                }
+                              >
+                                {dayNames[d].slice(0, 3)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {!formData.isAllDay && (
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <label htmlFor={`special-startTime-${formData.id}`} className="field-label">
+                            Start time
+                          </label>
+                          <TimeInput
+                            id={`special-startTime-${formData.id}`}
+                            required
+                            value={formData.startTime}
+                            onChange={(v) => updateSpecialForm(formData.id, { startTime: v })}
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor={`special-endTime-${formData.id}`} className="field-label">
+                            End time
+                          </label>
+                          <TimeInput
+                            id={`special-endTime-${formData.id}`}
+                            value={formData.endTime}
+                            onChange={(v) => updateSpecialForm(formData.id, { endTime: v })}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <Toggle
+                      on={formData.isAllDay}
+                      onChange={(v) => updateSpecialForm(formData.id, { isAllDay: v, startTime: v ? '00:00' : '', endTime: '' })}
+                      label="All day"
+                    />
+                    {formData.frequency === 'dates' ? (
+                      <div ref={registerFieldRef(`special-date-${formData.id}`)}>
+                        <label className="field-label">Dates</label>
+                        <DateList
+                          dates={formData.specificDates}
+                          onChange={(specificDates) => updateSpecialForm(formData.id, { specificDates, date: specificDates[0] || '' })}
+                          placeholder="Click to add a date"
+                        />
+                        <p className="field-hint mt-1.5">Add every date the special runs.</p>
+                      </div>
+                    ) : (
+                      <div className={`grid grid-cols-1 gap-4 ${formData.frequency === 'weekly' ? 'sm:grid-cols-2' : ''}`}>
+                        <div ref={registerFieldRef(`special-date-${formData.id}`)}>
+                          <label htmlFor={`special-date-${formData.id}`} className="field-label">
+                            {formData.frequency === 'weekly' ? 'Starts' : 'Date'}
+                          </label>
+                          <DatePicker
+                            id={`special-date-${formData.id}`}
+                            value={formData.date}
+                            onChange={(value) => updateSpecialForm(formData.id, { date: value })}
+                            required
+                            placeholder="Select date"
+                          />
+                        </div>
+                        {formData.frequency === 'weekly' && (
+                          <div ref={registerFieldRef(`special-recurrenceEndDate-${formData.id}`)}>
+                            <label className="field-label">Runs until (optional)</label>
+                            <DatePicker
+                              value={formData.recurrenceEndDate}
+                              onChange={(value) => updateSpecialForm(formData.id, { recurrenceEndDate: value })}
+                              min={formData.date}
+                              max={formData.date ? format(addDays(parseISO(formData.date), 52 * 7), 'yyyy-MM-dd') : undefined}
+                              placeholder="Pick an end date"
+                            />
+                            <p className="field-hint mt-1.5">Leave empty to keep it running (up to 52 weeks).</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Section>
+
+                  <Section number={3} title="Location" sectionRef={registerFieldRef(`special-venue-${formData.id}`)}>
+                    <LocationFields
+                      idPrefix="special-venue"
+                      form={formData}
+                      update={(updates) => updateSpecialForm(formData.id, updates)}
+                      venues={venues}
+                      organizerVenues={organizerVenues}
+                        linkedVenueIds={organizerVenueIds}
+                      application={application}
+                      noun="special"
+                    />
+                  </Section>
+
+                  <Section number={4} title="Fine print">
+                    <p className="-mt-1 text-[13px] text-ink-muted">Optional - helps people avoid surprises.</p>
+                    <div>
+                      <p className="field-label mb-1">Conditions</p>
+                      <p className="field-hint mb-3">Pick any that apply.</p>
+                      <div className="flex flex-wrap gap-2">
+                        {specialConditionCategories.map((c) => {
+                          const active = formData.conditions.includes(c);
+                          return (
+                            <button
+                              key={c}
+                              type="button"
+                              className="chip"
+                              data-active={active}
+                              aria-pressed={active}
+                              onClick={() =>
+                                updateSpecialForm(formData.id, {
+                                  conditions: active ? formData.conditions.filter((x) => x !== c) : [...formData.conditions, c],
+                                })
+                              }
+                            >
+                              {categoryLabels[c]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="field-label mb-1">Age limit</p>
+                      <p className="field-hint mb-3">Drink specials are usually 19+.</p>
+                      <ChipGroup
+                        value={formData.is19Plus ? '19' : 'all'}
+                        onChange={(v) => updateSpecialForm(formData.id, { is19Plus: v === '19' })}
+                        options={[
+                          { id: 'all', label: 'All ages' },
+                          { id: '19', label: '19+' },
+                        ]}
+                      />
+                    </div>
+                  </Section>
                 </div>
-              </section>
+              ))}
 
-              {/* Location */}
-              <section
-                ref={registerFieldRef(`special-venue-${formData.id}`)}
-                className="bg-card border border-border rounded-xl p-6 mb-6"
-              >
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <MapPin size={20} className="text-primary" />
-                  Location
-                </h3>
-                
-                <VenueSelector
-                  venues={venues}
-                  selectedVenueId={formData.venueId}
-                  newVenueName={formData.newVenueName}
-                  newVenueAddress={formData.newVenueAddress}
-                  onVenueSelect={(venueId) => updateSpecialForm(formData.id, { venueId })}
-                  onNewVenueNameChange={(name) => updateSpecialForm(formData.id, { newVenueName: name })}
-                  onNewVenueAddressChange={(address) => updateSpecialForm(formData.id, { newVenueAddress: address })}
-                  required
-                  id={`special-venue-${formData.id}`}
-                />
-              </section>
-
-              {/* Categories */}
-              <section
-                ref={registerFieldRef(`special-categories-${formData.id}`)}
-                className="bg-card border border-border rounded-xl p-6 mb-6"
-              >
-                <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
-                  <Tag size={20} className="text-primary" />
-                  Categories *
-                </h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Select Food, Drink, or both
-                </p>
-                
-                <div className="flex flex-wrap gap-2">
-                  {(['food', 'drink'] as const).map((category) => {
-                    const isSelected = formData.categories.includes(category);
-                    return (
-                      <button
-                        key={category}
-                        type="button"
-                        onClick={() => handleSpecialCategoryToggle(formData.id, category)}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all capitalize ${
-                          isSelected
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted text-muted-foreground hover:bg-border'
-                        }`}
-                      >
-                        {category}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {/* Price */}
-              <section className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
-                  <DollarSign size={20} className="text-primary" />
-                  Price
-                </h3>
-                
-                <div>
-                  <label htmlFor={`special-price-${formData.id}`} className="block text-sm font-medium text-foreground mb-2">
-                    Special Price
-                  </label>
-                  <input
-                    type="text"
-                    id={`special-price-${formData.id}`}
-                    value={formData.price}
-                    onChange={(e) => updateSpecialForm(formData.id, { price: e.target.value })}
-                    placeholder="e.g., 5 Pints, Half-Price Wings, 12 Burger & Pint"
-                    className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Describe the special pricing (e.g., &quot;5 Pints&quot;, &quot;50% Off&quot;, &quot;Buy One Get One&quot;). Plain numbers get a $ when displayed.
-                  </p>
-                </div>
-              </section>
-
-              {formIndex < specialForms.length - 1 && (
-                <div className="border-b-2 border-dashed border-border my-8" />
-              )}
-            </div>
-          ))}
-
-          {/* Add Another Button */}
-          {formType === 'event' && (
-          <button
-            type="button"
-            onClick={addAnotherEvent}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 border-2 border-dashed border-border rounded-xl font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors"
-          >
-            <Plus size={20} />
-            Add Another Event
-          </button>
-          )}
-
-          {formType === 'special' && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
             <button
               type="button"
-              onClick={addAnotherSpecial}
-              className="w-full flex items-center justify-center gap-2 px-6 py-4 border-2 border-dashed border-border rounded-xl font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors"
+              onClick={() =>
+                isEvent
+                  ? setEventForms((p) => [...p, createEmptyForm(organizerVenueId)])
+                  : setSpecialForms((p) => [...p, createEmptySpecialForm(organizerVenueId)])
+              }
+              className="text-[15px] font-medium text-link hover:underline"
             >
-              <Plus size={20} />
-              Add Another Special
+              + Add another {isEvent ? 'event' : 'special'}
             </button>
-          )}
+            <button type="submit" disabled={isSubmitting} className="btn-sun h-[52px] px-7 text-[15px]">
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  {isVerified ? 'Publishing...' : 'Submitting...'}
+                </>
+              ) : isVerified ? (
+                'Publish now →'
+              ) : (
+                'Submit for review →'
+              )}
+            </button>
+          </div>
+        </div>
 
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-primary text-primary-foreground rounded-xl font-medium text-lg hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 size={20} className="animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              <>
-                <Send size={20} />
-                {formType === 'event' 
-                  ? (isAdmin 
-                  ? `Publish ${eventForms.length > 1 ? 'Events' : 'Event'}` 
-                      : `Submit ${eventForms.length > 1 ? 'Events' : 'Event'} for Review`)
-                  : (isAdmin 
-                      ? `Publish ${specialForms.length > 1 ? 'Specials' : 'Special'}` 
-                      : `Submit ${specialForms.length > 1 ? 'Specials' : 'Special'} for Review`)
-                }
-              </>
-            )}
-          </button>
-        </form>
-      </div>
+        <SubmitSidebar formType={formType} instant={isVerified} showOrganizerTips={user.role === 'user'} />
+      </form>
     </div>
+  );
+}
+
+export default function SubmitEventPage() {
+  return (
+    <Suspense fallback={null}>
+      <SubmitContent />
+    </Suspense>
   );
 }

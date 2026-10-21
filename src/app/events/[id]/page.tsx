@@ -1,137 +1,219 @@
 'use client';
 
-import { use, useState, useCallback } from 'react';
+import { use, useState, useCallback, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, 
-  Calendar, 
-  Clock, 
-  MapPin, 
-  Ticket, 
-  ExternalLink,
-  Share2,
+import {
+  ArrowLeft,
+  Calendar,
+  Clock,
+  MapPin,
+  Ticket,
   Heart,
-  Navigation,
-  Copy,
-  Check,
   Repeat,
   Edit,
   Ban,
   Trash2,
   Loader2,
-  Utensils
+  Share2,
+  Utensils,
+  Wine,
+  Tag as TagIcon,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { categoryLabels, categoryColors } from '@/types/event';
-import { EventCard, Toast } from '@/components';
+import type { Event } from '@/types/event';
+import { Toast } from '@/components';
 import SmartImage from '@/components/ui/SmartImage';
-import { formatPrice } from '@/utils/price';
+import { formatPrice, isFreePrice } from '@/utils/price';
+import { isListingDetailCategory, specialConditionCategories } from '@/constants/categories';
 import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
+import {
+  CategoryTag,
+  SaveButton,
+  Tag,
+  TimeCard,
+  formatTime,
+  isAllDayEvent,
+  isDowntown,
+} from '@/components/brand';
 
-export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const router = useRouter();
-  const { getEventById, getEventsByVenue, isLiked, toggleLike, getLikeCount } = useEvents();
-  const { user, isAdmin } = useAuth();
-  const [showToast, setShowToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [eventActionLoading, setEventActionLoading] = useState(false);
-  
-  const event = getEventById(id);
-
-  const handleShare = useCallback(async () => {
-    if (!event) return;
-    const url = window.location.href;
-    
-    // Try native share first (mobile devices)
-    if (typeof navigator !== 'undefined' && navigator.share) {
-      try {
-        await navigator.share({
-          title: event.title,
-          text: `Check out ${event.title} at ${event.venue.name}`,
-          url,
-        });
-        return;
-      } catch (err) {
-        // User cancelled or share failed, fall through to clipboard
-        if ((err as Error).name === 'AbortError') return;
-      }
-    }
-    
-    // Fallback: copy to clipboard
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(url);
-      } else {
-        // Fallback for older browsers
-        const textArea = document.createElement('textarea');
-        textArea.value = url;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-9999px';
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
-      setCopied(true);
-      setToastMessage('Link copied to clipboard!');
-      setShowToast(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      setToastMessage('Could not copy link');
-      setShowToast(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event?.title, event?.venue?.name]);
-
-  if (!event) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="font-display text-3xl text-foreground mb-4">Event Not Found</h1>
-          <p className="text-muted-foreground mb-6">The event you&apos;re looking for doesn&apos;t exist.</p>
-          <Link
-            href="/events"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg"
-          >
-            <ArrowLeft size={18} />
-            Back to Events
-          </Link>
-        </div>
+function DetailRow({ icon, label, children }: { icon: ReactNode; label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-3 border-b border-line py-4 last:border-b-0">
+      <span className="mt-0.5 text-link">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</p>
+        <p className="mt-1 text-[14px] text-navy">{children}</p>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  const formattedDate = format(parseISO(event.date), 'EEEE, MMMM d, yyyy');
-  const isAllDay = event.isAllDay || event.startTime === '00:00';
-  const formattedStartTime = isAllDay
-    ? 'All Day'
-    : format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a');
-  const formattedEndTime = !isAllDay && event.endTime
-    ? format(parseISO(`2000-01-01T${event.endTime}`), 'h:mm a')
-    : null;
-  const isFoodDeal = event.categories.includes('food-deal');
-  const entityLabel = isFoodDeal ? 'Food & Drink Special' : 'Event';
-  const displayPrice = formatPrice(event.price);
-  const displayImage = event.imageUrl || event.venue?.coverImageUrl;
-  const recurrenceLabel = event.isRecurring
+function recurrenceOf(event: Event) {
+  return event.isRecurring
     ? getRecurrenceLabel({
         recurrencePattern: event.recurrencePattern,
         recurrenceDays: event.recurrenceDays,
         recurrenceDay: event.recurrenceDay,
       })
     : null;
+}
 
-  const otherVenueEvents = getEventsByVenue(event.venue.id)
-    .filter(e => e.id !== event.id && e.date >= format(new Date(), 'yyyy-MM-dd'))
-    .slice(0, 3);
+function isOnNow(event: Event) {
+  if (event.date !== format(new Date(), 'yyyy-MM-dd')) return false;
+  if (isAllDayEvent(event)) return true;
+  const now = format(new Date(), 'HH:mm');
+  const end = event.endTime && event.endTime > event.startTime ? event.endTime : '23:59';
+  return event.startTime <= now && now <= end;
+}
 
+function SpecialMiniRow({ event, saved, onSave, extra }: { event: Event; saved: boolean; onSave: () => void; extra?: string }) {
+  const isDrink = event.categories.includes('drink') && !event.categories.includes('food');
+  const recurrence = recurrenceOf(event) ?? format(parseISO(event.date), 'EEE, MMM d');
+  return (
+    <div className="group relative flex items-start gap-5 border-b border-line py-4">
+      <Link href={`/events/${event.id}`} className="absolute inset-0" aria-label={event.title} />
+      <span className="flex w-[72px] shrink-0 flex-col text-[13px] text-navy pointer-events-none">
+        {isAllDayEvent(event) ? (
+          <span className="font-medium">All day</span>
+        ) : (
+          <>
+            <span className="font-medium">{formatTime(event.startTime)}</span>
+            {event.endTime && <span className="text-ink-muted">– {formatTime(event.endTime)}</span>}
+          </>
+        )}
+      </span>
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] pointer-events-none ${
+          isDrink ? 'bg-sky text-link-deep' : 'bg-[#ffe8d6] text-[#a84a12]'
+        }`}
+      >
+        {isDrink ? <Wine size={15} /> : <Utensils size={15} />}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-1 pointer-events-none">
+        <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
+        <span className="truncate text-[13px] text-ink-muted">
+          {event.venue.name}
+          {event.venue.neighborhood ? ` · ${event.venue.neighborhood}` : ''}
+          {extra ? ` · ${extra}` : ''}
+        </span>
+        <span className="line-clamp-1 text-[13px] text-ink-muted">{event.description}</span>
+      </span>
+      <span className="flex shrink-0 flex-col items-end gap-1 text-right pointer-events-none">
+        {isOnNow(event) && (
+          <span className="tag bg-success-tint text-success normal-case tracking-normal font-medium gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" /> On now
+          </span>
+        )}
+        <span className="text-[12px] text-ink-muted">{recurrence}</span>
+      </span>
+      <SaveButton saved={saved} onClick={onSave} size={16} className="relative z-10 -mt-1" />
+    </div>
+  );
+}
+
+export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const router = useRouter();
+  const { getEventById, getEventsByVenue, getTodaysEvents, isLiked, toggleLike, getLikeCount, isLoading } = useEvents();
+  const { user, isAdmin } = useAuth();
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [eventActionLoading, setEventActionLoading] = useState(false);
+
+  const event = getEventById(id);
+
+  const handleShare = useCallback(async () => {
+    if (!event) return;
+    const url = window.location.href;
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title: event.title, text: `Check out ${event.title} at ${event.venue.name}`, url });
+        return;
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setToastMessage('Link copied to clipboard!');
+    } catch {
+      setToastMessage('Could not copy link');
+    }
+    setShowToast(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.title, event?.venue?.name]);
+
+  if (!event) {
+    if (isLoading) {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <Loader2 size={32} className="animate-spin text-navy" />
+        </div>
+      );
+    }
+    return (
+      <div className="page-container flex min-h-[60vh] flex-col items-start justify-center gap-4 py-24">
+        <p className="eyebrow">— Not found</p>
+        <h1 className="display-section">This listing has wrapped up</h1>
+        <p className="text-ink-muted">The event or special you&rsquo;re looking for doesn&rsquo;t exist anymore.</p>
+        <Link href="/events" className="btn-sun mt-2">
+          Browse what&rsquo;s on →
+        </Link>
+      </div>
+    );
+  }
+
+  const isFoodDeal = event.categories.includes('food-deal');
+  const entityLabel = isFoodDeal ? 'Special' : 'Event';
+  const allDay = isAllDayEvent(event);
+  const timeLabel = allDay
+    ? 'All day'
+    : `${formatTime(event.startTime)}${event.endTime ? ` – ${formatTime(event.endTime)}` : ''}`;
+  const dateLong = format(parseISO(event.date), 'EEEE, MMMM d, yyyy');
+  const dateShort = format(parseISO(event.date), 'EEEE, MMMM d');
+  const isToday = event.date === format(new Date(), 'yyyy-MM-dd');
+  const displayPrice = formatPrice(event.price);
+  const isFree = !displayPrice || isFreePrice(displayPrice);
+  const isSoldOut = event.categories.includes('sold-out');
+  const needsRsvp = event.categories.includes('rsvp');
+  const isPayWhatYouCan = displayPrice.toLowerCase() === 'pay what you can';
+  const isHappyHour = event.categories.includes('happy-hour');
+  const hasFood = event.categories.includes('food');
+  const hasDrink = event.categories.includes('drink');
+  const specialType = isHappyHour ? 'Happy Hour' : hasFood && hasDrink ? 'Food & drinks' : hasDrink ? 'Drinks' : 'Food';
+  const conditions = specialConditionCategories.filter((c) => event.categories.includes(c));
+  const recurrence = recurrenceOf(event);
   const liked = isLiked(event.id);
   const likeCount = getLikeCount(event.id);
+  const displayImage = event.imageUrl;
+  const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(`${event.venue.name}, ${event.venue.address}`)}`;
+  const tags = event.categories.filter(
+    (c) => c !== 'food-deal' && !isListingDetailCategory(c) && !(isFoodDeal && (c === 'food' || c === 'drink'))
+  );
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  const venueUpcoming = getEventsByVenue(event.venue.id).filter((e) => e.id !== event.id && e.date >= todayStr);
+  const moreAtVenue = (() => {
+    const seen = new Set<string>([event.seriesId || event.id]);
+    return venueUpcoming
+      .filter((e) => e.categories.includes('food-deal') === isFoodDeal)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+      .filter((e) => {
+        const key = e.seriesId || e.id;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, isFoodDeal ? 3 : 2);
+  })();
+  const nearbyOnNow = isFoodDeal
+    ? getTodaysEvents()
+        .filter((e) => e.categories.includes('food-deal') && e.venue.id !== event.venue.id && isOnNow(e))
+        .slice(0, 3)
+    : [];
 
   const handleLike = () => {
     if (!user) {
@@ -177,8 +259,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         'Delete THIS AND ALL FUTURE occurrences?\n\nOK = this and all future\nCancel = just this occurrence'
       );
       scope = allFuture ? 'future' : 'this';
-    } else {
-      if (!confirm(`Are you sure you want to permanently delete this ${entityLabel.toLowerCase()}? This cannot be undone.`)) return;
+    } else if (!confirm(`Are you sure you want to permanently delete this ${entityLabel.toLowerCase()}? This cannot be undone.`)) {
+      return;
     }
     setEventActionLoading(true);
     try {
@@ -199,300 +281,251 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   return (
-    <div className="min-h-screen">
-      {/* Hero Image */}
-      <div className="relative h-64 sm:h-80 lg:h-96 bg-muted">
-        {displayImage && !isFoodDeal ? (
-          <SmartImage
-            src={displayImage}
-            alt={event.title}
-            sizes="100vw"
-            priority
-          />
-        ) : displayImage && isFoodDeal ? (
-          <SmartImage
-            src={displayImage}
-            alt={event.title}
-            sizes="100vw"
-            priority
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
-            {isFoodDeal ? (
-              <Utensils size={64} className="text-muted-foreground" />
-            ) : (
-              <Calendar size={64} className="text-muted-foreground" />
-            )}
-          </div>
+    <div className="page-container pb-24 pt-6">
+      <Link
+        href={isFoodDeal ? '/events?tab=deals' : '/events'}
+        className="inline-flex items-center gap-2 text-[13px] font-medium text-navy hover:underline"
+      >
+        <ArrowLeft size={16} />
+        {isFoodDeal ? 'Back to Food & Drink' : 'Back to Browse'}
+      </Link>
+
+      {/* Tags */}
+      <div className="mt-5 flex flex-wrap gap-1.5">
+        {isFoodDeal && <Tag className="bg-coral text-navy">{specialType}</Tag>}
+        {tags.slice(0, 3).map((c) => (
+          <CategoryTag key={c} category={c} />
+        ))}
+        {!isFoodDeal && isFree && <Tag className="bg-sky text-navy">Free</Tag>}
+        {!isFoodDeal && isPayWhatYouCan && <Tag className="bg-sky text-navy">Pay what you can</Tag>}
+        {!isFoodDeal && needsRsvp && <CategoryTag category="rsvp" />}
+        {!isFoodDeal && isSoldOut && <CategoryTag category="sold-out" />}
+        {isFoodDeal && conditions.map((c) => <CategoryTag key={c} category={c} />)}
+        {isFoodDeal && isOnNow(event) && (
+          <Tag className="bg-success-tint text-success gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" /> On now
+          </Tag>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-        
-        {/* Back button */}
-        <button
-          onClick={() => router.back()}
-          className="absolute top-4 left-4 p-2 bg-card/90 backdrop-blur-sm rounded-lg hover:bg-card transition-colors border border-border/50"
-        >
-          <ArrowLeft size={20} className="text-foreground" />
-        </button>
-
-        {/* Action buttons */}
-        <div className="absolute top-4 right-4 flex items-center gap-2">
-          <button
-            onClick={handleShare}
-            className="p-2 bg-card/90 backdrop-blur-sm rounded-lg hover:bg-card transition-colors border border-border/50"
-            title="Share"
-          >
-            <Share2 size={20} className="text-foreground" />
-          </button>
-          <button
-            onClick={handleLike}
-            className={`p-2 bg-card/90 backdrop-blur-sm rounded-lg hover:bg-card transition-colors flex items-center gap-1 border border-border/50 ${
-              liked ? 'text-red-500' : 'text-foreground'
-            }`}
-            title={user ? (liked ? 'Unlike' : 'Like') : 'Sign in to like'}
-          >
-            <Heart size={20} className={liked ? 'fill-current' : ''} />
-            {likeCount > 0 && <span className="text-sm font-medium">{likeCount}</span>}
-          </button>
-        </div>
-
-        {/* Category badges */}
-        <div className="absolute bottom-4 left-4 flex flex-wrap gap-2">
-          {event.categories.map((cat) => (
-            <Link
-              key={cat}
-              href={`/events?category=${cat}`}
-              className={`px-3 py-1 rounded-full text-sm font-medium text-white ${categoryColors[cat]} hover:opacity-90 transition-opacity`}
-            >
-              {categoryLabels[cat]}
-            </Link>
-          ))}
-        </div>
+        {isCancelled && <Tag className="bg-danger text-white">Cancelled</Tag>}
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Content */}
-          <div className="lg:col-span-2">
-            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl text-foreground mb-4">
-              {event.title}
-            </h1>
+      <h1 className="display-section mt-4 max-w-[900px]">{event.title}</h1>
+      {isFoodDeal && (
+        <p className="mt-4 text-[18px] text-ink-muted">
+          at {event.venue.name}
+          {event.venue.neighborhood ? ` · ${isDowntown(event.venue) ? 'Downtown Kingston' : event.venue.neighborhood}` : ''}
+        </p>
+      )}
 
-            {/* Quick Info */}
-            <div className="flex flex-wrap items-center gap-4 text-muted-foreground mb-8">
-              <span className="flex items-center gap-2">
-                <Calendar size={18} className="text-primary" />
-                {formattedDate}
-              </span>
-              <span className="flex items-center gap-2">
-                <Clock size={18} className="text-primary" />
-                {formattedStartTime}
-                {formattedEndTime && ` - ${formattedEndTime}`}
-              </span>
-              {event.isRecurring && recurrenceLabel && (
-                <span className="flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full text-primary">
-                  <Repeat size={16} />
-                  {recurrenceLabel}
-                </span>
+      {/* Info pills */}
+      <div className="mt-6 flex flex-wrap gap-2">
+        {isFoodDeal && recurrence ? (
+          <span className="info-pill">
+            <Calendar size={14} className="text-link" />
+            {recurrence}
+          </span>
+        ) : (
+          <span className="info-pill">
+            <Calendar size={14} className="text-link" />
+            {dateShort}
+          </span>
+        )}
+        <span className="info-pill">
+          <Clock size={14} className="text-link" />
+          {isFoodDeal && isToday ? `Today · ${timeLabel}` : timeLabel}
+        </span>
+        <Link href={`/venues/${event.venue.id}`} className="info-pill hover:bg-[#cfe2f3]">
+          <MapPin size={14} className="text-link" />
+          {event.venue.name}
+        </Link>
+        {!isFoodDeal && (
+          <span className="info-pill">
+            <Ticket size={14} className="text-link" />
+            {isSoldOut ? 'Sold out' : !displayPrice || displayPrice.toLowerCase() === 'free' ? 'Free entry' : displayPrice}
+          </span>
+        )}
+        {!isFoodDeal && recurrence && (
+          <span className="info-pill">
+            <Repeat size={14} className="text-link" />
+            {recurrence}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_340px] lg:gap-16">
+        {/* Main column */}
+        <div className="min-w-0">
+          <p className="eyebrow-sm">About this {isFoodDeal ? 'special' : 'event'}</p>
+          <p className="mt-3 whitespace-pre-line text-[17px] leading-[1.6] text-navy">{event.description}</p>
+          {event.lastEditedAt && (
+            <p className="mt-3 text-[13px] text-ink-muted">Edited {format(new Date(event.lastEditedAt), 'MMM d, yyyy')}</p>
+          )}
+
+          {displayImage && (
+            <div className="relative mt-8 aspect-[16/9] overflow-hidden rounded-[22px] bg-sky-soft">
+              <SmartImage src={displayImage} alt={event.title} sizes="(max-width: 1024px) 100vw, 800px" />
+            </div>
+          )}
+
+          {/* Venue */}
+          <p className="eyebrow-sm mt-10">Venue</p>
+          <div className="card mt-3 flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+            <div className="flex h-[68px] w-[68px] shrink-0 items-center justify-center rounded-[14px] bg-sky text-link">
+              <MapPin size={22} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[20px] font-bold text-navy">{event.venue.name}</p>
+              <p className="mt-0.5 text-[14px] text-ink-muted">{event.venue.address}</p>
+              {event.venue.neighborhood && (
+                <p className="mt-1 text-[12px] font-medium text-link">{event.venue.neighborhood}</p>
               )}
             </div>
+            <Link href={`/venues/${event.venue.id}`} className="btn-outline self-start sm:self-center">
+              View venue →
+            </Link>
+          </div>
 
-            {/* Description */}
-            <div className="prose prose-lg max-w-none mb-8">
-              <h2 className="font-display text-2xl text-foreground mb-4">
-                {isFoodDeal ? 'About This Special' : 'About This Event'}
-              </h2>
-              <p className="text-muted-foreground leading-relaxed">
-                {event.description}
+          {/* More at venue */}
+          {moreAtVenue.length > 0 && (
+            <>
+              <p className="eyebrow-sm mt-10">
+                More {isFoodDeal ? 'specials' : ''} at {event.venue.name}
               </p>
-            </div>
-
-            {/* Venue Section */}
-            <div className="bg-card border border-border rounded-xl p-6 mb-8">
-              <h2 className="font-display text-2xl text-foreground mb-4">Venue</h2>
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <MapPin size={24} className="text-primary" />
-                </div>
-                <div>
-                  <Link
-                    href={`/venues/${event.venue.id}`}
-                    className="font-medium text-lg text-foreground hover:text-primary transition-colors"
-                  >
-                    {event.venue.name}
-                  </Link>
-                  <p className="text-muted-foreground">{event.venue.address}</p>
-                  {event.venue.neighborhood && (
-                    <p className="text-sm text-muted-foreground mt-1">{event.venue.neighborhood}</p>
-                  )}
-                  <div className="flex items-center gap-4 mt-3">
-                    <a
-                      href={`https://maps.google.com/?q=${encodeURIComponent(event.venue.address)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-sm text-primary hover:underline"
-                    >
-                      <Navigation size={14} />
-                      Get Directions
-                    </a>
-                    {event.venue.website && (
-                      <a
-                        href={event.venue.website}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-sm text-primary hover:underline"
-                      >
-                        <ExternalLink size={14} />
-                        Website
-                      </a>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Other events at this venue */}
-            {otherVenueEvents.length > 0 && (
-              <div>
-                <h2 className="font-display text-2xl text-foreground mb-4">
-                  More at {event.venue.name}
-                </h2>
-                <div className="space-y-3">
-                  {otherVenueEvents.map((e) => (
-                    <EventCard key={e.id} event={e} variant="compact" />
+              {isFoodDeal ? (
+                <div className="mt-3 border-t border-line">
+                  {moreAtVenue.map((e) => (
+                    <SpecialMiniRow key={e.id} event={e} saved={isLiked(e.id)} onSave={() => (user ? toggleLike(e.id) : router.push('/login'))} />
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
-
-          {/* Sidebar */}
-          <div className="lg:col-span-1">
-            <div className="sticky top-24 space-y-6">
-              {/* Event Management Card (for submitter / admin) */}
-              {canManageEvent && (
-                <div className="bg-card border border-border rounded-xl p-6">
-                  <h3 className="font-medium text-foreground mb-3">Manage {entityLabel}</h3>
-                  <div className="space-y-2">
-                    {!isCancelled && event.status !== 'rejected' && (
-                      <Link
-                        href={`/events/${event.id}/edit`}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
-                      >
-                        <Edit size={16} /> Edit {entityLabel}
-                      </Link>
-                    )}
-                    {!isCancelled && event.status !== 'rejected' && (
-                      <button
-                        onClick={handleCancelEvent}
-                        disabled={eventActionLoading}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-50 transition-colors disabled:opacity-50"
-                      >
-                        {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />} Cancel {entityLabel}
-                      </button>
-                    )}
-                    <button
-                      onClick={handleDeleteEvent}
-                      disabled={eventActionLoading}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
-                    >
-                      {eventActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Delete {entityLabel}
-                    </button>
-                  </div>
+              ) : (
+                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {moreAtVenue.map((e) => (
+                    <TimeCard key={e.id} event={e} />
+                  ))}
                 </div>
               )}
+            </>
+          )}
 
-              {/* Ticket/Price Card */}
-              <div className="bg-card border border-border rounded-xl p-6">
-                {displayPrice && (
-                  <div className="flex items-center gap-2 mb-4">
-                    <Ticket size={20} className="text-primary" />
-                    <span className="text-2xl font-display text-foreground">{displayPrice}</span>
-                  </div>
-                )}
-                
-                {event.ticketUrl ? (
-                  <a
-                    href={event.ticketUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-opacity"
-                  >
-                    Get Tickets
-                    <ExternalLink size={16} />
-                  </a>
-                ) : (
-                  <button
-                    onClick={handleLike}
-                    className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
-                      liked 
-                        ? 'bg-red-100 text-red-600 hover:bg-red-200' 
-                        : 'bg-primary text-primary-foreground hover:opacity-90'
-                    }`}
-                  >
-                    <Heart size={16} className={liked ? 'fill-current' : ''} />
-                    {liked ? 'Saved!' : "I'm Interested"}
-                  </button>
-                )}
+          {nearbyOnNow.length > 0 && (
+            <>
+              <p className="eyebrow-sm mt-10">Other specials on now</p>
+              <div className="mt-3 border-t border-line">
+                {nearbyOnNow.map((e) => (
+                  <SpecialMiniRow key={e.id} event={e} saved={isLiked(e.id)} onSave={() => (user ? toggleLike(e.id) : router.push('/login'))} />
+                ))}
+              </div>
+              <Link href="/events?tab=deals" className="link-arrow mt-4">
+                See all specials on now →
+              </Link>
+            </>
+          )}
+        </div>
 
-                <button
-                  onClick={handleShare}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 mt-3 border border-border rounded-xl font-medium hover:bg-muted transition-colors"
+        {/* Sidebar */}
+        <aside className="flex flex-col gap-3 lg:sticky lg:top-24 self-start w-full">
+          <div className="rounded-[22px] bg-navy p-6 text-white">
+            <p className="eyebrow-bold text-sun">{isFoodDeal ? 'The deal' : 'Entry'}</p>
+            <p className="mt-2 text-[32px] font-bold leading-tight tracking-[-0.02em]">
+              {isFoodDeal ? displayPrice || event.title : isFree ? 'Free' : displayPrice}
+            </p>
+            <p className="mt-2 text-[13px] text-on-dark-muted">
+              {isFoodDeal
+                ? `${allDay ? 'All day' : `Ends ${isToday ? 'today ' : ''}at ${formatTime(event.endTime || event.startTime)}`}.`
+                : isSoldOut
+                ? 'This one’s sold out.'
+                : needsRsvp
+                ? 'RSVP or register before you go.'
+                : isFree
+                ? 'No tickets needed — just show up.'
+                : event.ticketUrl
+                ? 'Grab tickets online before they sell out.'
+                : 'Pay at the door.'}
+            </p>
+            <div className="mt-5 flex gap-2.5">
+              {isFoodDeal ? (
+                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn-sun h-[46px] flex-1">
+                  Get directions
+                </a>
+              ) : event.ticketUrl || event.venue.website ? (
+                <a
+                  href={event.ticketUrl || event.venue.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-sun h-[46px] flex-1"
                 >
-                  <Share2 size={16} />
-                  Share Event
-                </button>
-              </div>
-
-              {/* Event Details Card */}
-              <div className="bg-card border border-border rounded-xl p-6">
-                <h3 className="font-medium text-foreground mb-4">Event Details</h3>
-                <dl className="space-y-4">
-                  <div>
-                    <dt className="text-sm text-muted-foreground">Date</dt>
-                    <dd className="text-foreground">{formattedDate}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm text-muted-foreground">Time</dt>
-                    <dd className="text-foreground">
-                      {formattedStartTime}
-                      {formattedEndTime && ` - ${formattedEndTime}`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm text-muted-foreground">Location</dt>
-                    <dd className="text-foreground">{event.venue.name}</dd>
-                    <dd className="text-sm text-muted-foreground">{event.venue.address}</dd>
-                  </div>
-                  {event.price && (
-                    <div>
-                      <dt className="text-sm text-muted-foreground">Price</dt>
-                      <dd className="text-foreground">{event.price}</dd>
-                    </div>
-                  )}
-                  {likeCount > 0 && (
-                    <div>
-                      <dt className="text-sm text-muted-foreground">Interest</dt>
-                      <dd className="text-foreground flex items-center gap-1">
-                        <Heart size={14} className="text-red-500 fill-current" />
-                        {likeCount} {likeCount === 1 ? 'person' : 'people'} interested
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </div>
+                  {event.ticketUrl && needsRsvp ? 'RSVP' : event.ticketUrl && !isFree ? 'Get tickets' : 'Visit the website'}
+                </a>
+              ) : (
+                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn-sun h-[46px] flex-1">
+                  Get directions
+                </a>
+              )}
+              <SaveButton variant="circle-dark" saved={liked} onClick={handleLike} />
             </div>
           </div>
-        </div>
+
+          <div className="card px-5 py-1">
+            <DetailRow icon={<Calendar size={16} />} label={isFoodDeal ? 'When' : 'Date'}>
+              {isFoodDeal ? `${isToday ? 'Today' : dateShort} · ${timeLabel}` : dateLong}
+            </DetailRow>
+            {isFoodDeal
+              ? recurrence && (
+                  <DetailRow icon={<Repeat size={16} />} label="Repeats">
+                    {recurrence}
+                  </DetailRow>
+                )
+              : (
+                  <DetailRow icon={<Clock size={16} />} label="Time">
+                    {timeLabel}
+                  </DetailRow>
+                )}
+            <DetailRow icon={<MapPin size={16} />} label="Location">
+              {event.venue.name}
+              {event.venue.address ? `, ${event.venue.address.split(',')[0]}` : ''}
+            </DetailRow>
+            <DetailRow icon={<TagIcon size={16} />} label={isFoodDeal ? 'Deal' : 'Price'}>
+              {isFoodDeal ? displayPrice || event.title : isFree ? 'Free' : displayPrice}
+            </DetailRow>
+            <DetailRow icon={<Heart size={16} />} label="Interest">
+              {likeCount} {likeCount === 1 ? 'person' : 'people'} saved this
+            </DetailRow>
+          </div>
+
+          <button onClick={handleShare} className="btn-ghost w-full">
+            <Share2 size={15} /> Share {entityLabel.toLowerCase()}
+          </button>
+
+          {canManageEvent && (
+            <div className="card p-5">
+              <p className="eyebrow-sm">Manage {entityLabel.toLowerCase()}</p>
+              <div className="mt-3 flex flex-col gap-2">
+                {!isCancelled && event.status !== 'rejected' && (
+                  <Link href={`/events/${event.id}/edit`} className="btn-outline w-full">
+                    <Edit size={15} /> Edit {entityLabel.toLowerCase()}
+                  </Link>
+                )}
+                {!isCancelled && event.status !== 'rejected' && (
+                  <button onClick={handleCancelEvent} disabled={eventActionLoading} className="btn-ghost w-full">
+                    {eventActionLoading ? <Loader2 size={15} className="animate-spin" /> : <Ban size={15} />} Cancel{' '}
+                    {entityLabel.toLowerCase()}
+                  </button>
+                )}
+                <button
+                  onClick={handleDeleteEvent}
+                  disabled={eventActionLoading}
+                  className="btn w-full border-[1.5px] border-danger text-danger font-medium hover:bg-danger-tint"
+                >
+                  {eventActionLoading ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />} Delete{' '}
+                  {entityLabel.toLowerCase()}
+                </button>
+              </div>
+            </div>
+          )}
+        </aside>
       </div>
 
-      {/* Toast notification */}
-      <Toast
-        isOpen={showToast}
-        message={toastMessage}
-        type="success"
-        onClose={() => setShowToast(false)}
-      />
+      <Toast isOpen={showToast} message={toastMessage} type="success" onClose={() => setShowToast(false)} />
     </div>
   );
 }

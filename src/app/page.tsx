@@ -1,386 +1,247 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, Calendar, Sparkles, Clock, MapPin, Utensils, Music, PartyPopper, Ticket, Sun, Trophy, Loader2 } from 'lucide-react';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { Loader2, Star } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { categoryLabels, categoryColors, EventCategory } from '@/types/event';
-import { useState, useRef } from 'react';
-import SmartImage from '@/components/ui/SmartImage';
+import { categoryLabels } from '@/constants/categories';
+import type { Event } from '@/types/event';
+import { listingTier } from '@/lib/promotion';
+import {
+  ExpandableTimeCard,
+  SaveButton,
+  SectionHeader,
+  SpecialRow,
+  formatTime,
+  hasSpecialEnded,
+  isAllDayEvent,
+  primaryCategory,
+} from '@/components/brand';
 
-// Filter button config
-const filterButtons: { id: EventCategory; label: string; icon: typeof Music }[] = [
-  { id: 'live-music', label: 'Live Music', icon: Music },
-  { id: 'activity-nights', label: 'Activity Nights', icon: PartyPopper },
-  { id: 'concert', label: 'Concerts', icon: Ticket },
-  { id: 'daytime', label: 'Daytime Events', icon: Sun },
-  { id: 'sports', label: 'Sports', icon: Trophy },
-];
+function FeatureCard({ event }: { event: Event }) {
+  const { isLiked, toggleLike } = useEvents();
+  const { user } = useAuth();
+  const router = useRouter();
+  const isToday = event.date === format(new Date(), 'yyyy-MM-dd');
+  const cat = primaryCategory(event);
+  const kicker = isToday
+    ? isAllDayEvent(event) || event.startTime < '17:00'
+      ? 'Today’s event'
+      : 'Tonight’s event'
+    : format(parseISO(event.date), 'EEEE, MMM d');
+
+  return (
+    <div className="relative flex h-full w-full flex-col gap-4 rounded-[22px] border-2 border-sun bg-navy p-6 shadow-[0_18px_40px_-8px_rgba(27,42,65,0.35),0_0_36px_0_rgba(255,181,71,0.45)]">
+      <div>
+        <span className="tag bg-sun text-navy gap-1.5 pl-2.5 pr-3 py-1.5 tracking-[0.12em]">
+          <Star size={12} className="fill-current" />
+          Featured
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        <p className="eyebrow-bold text-sun">{kicker}</p>
+        <p className="text-[26px] sm:text-[30px] font-bold leading-[1.1] tracking-[-0.02em] text-white">{event.title}</p>
+        <p className="text-[14px] leading-[1.45] text-on-dark-muted line-clamp-3">{event.description}</p>
+      </div>
+      <div className="flex flex-wrap gap-x-7 gap-y-3 border-t border-white pt-4 uppercase">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[13px] font-bold text-white">
+            {isAllDayEvent(event) ? 'All day' : formatTime(event.startTime)}
+          </span>
+          <span className="text-[12px] font-medium tracking-[0.14em] text-on-dark-muted">Time</span>
+        </div>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="truncate text-[13px] font-bold text-white">{event.venue?.name}</span>
+          <span className="text-[12px] font-medium tracking-[0.14em] text-on-dark-muted">Venue</span>
+        </div>
+        {cat && (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[13px] font-bold text-white">{categoryLabels[cat]}</span>
+            <span className="text-[12px] font-medium tracking-[0.14em] text-on-dark-muted">Type</span>
+          </div>
+        )}
+      </div>
+      <div className="mt-auto flex gap-2.5 pt-1">
+        <Link href={`/events/${event.id}`} className="btn-sun h-[46px] flex-1">
+          View event →
+        </Link>
+        <SaveButton
+          variant="circle-dark"
+          saved={isLiked(event.id)}
+          onClick={() => (user ? toggleLike(event.id) : router.push('/login'))}
+        />
+      </div>
+    </div>
+  );
+}
+
+const MAX_FEATURED = 3;
 
 export default function HomePage() {
-  const { getTodaysEvents, getFeaturedEvents, events, isLoading } = useEvents();
+  const { getTodaysEvents, getFeaturedEvents, getUpcomingEvents, isLoading, isLiked, toggleLike } = useEvents();
   const { user } = useAuth();
-  const [activeFilter, setActiveFilter] = useState<EventCategory | null>(null);
-  const eventsContainerRef = useRef<HTMLDivElement>(null);
-  const specialsContainerRef = useRef<HTMLDivElement>(null);
-  
-  const todaysEvents = getTodaysEvents();
-  const featuredEvents = getFeaturedEvents();
-  const today = new Date();
-  
-  // Separate events and food deals for today
-  // getTodaysEvents() already sorts by promotion tier, so we just filter
-  const allTodayEvents = todaysEvents.filter(e => !e.categories.includes('food-deal'));
-  const filteredTodayEvents = activeFilter 
-    ? allTodayEvents.filter(e => e.categories.includes(activeFilter))
-    : allTodayEvents;
-  // Keep the sorted order from getTodaysEvents (already sorted by promotion tier)
-  const todayEvents = filteredTodayEvents.slice(0, 9);
-  
-  // Filter food & drink specials and limit featured/promoted venues to 1 special each
-  // getTodaysEvents() already sorts by promotion tier, so we maintain that order
-  const allDeals = todaysEvents.filter(e => e.categories.includes('food-deal'));
-  const processedDeals: typeof allDeals = [];
-  const featuredPromotedVenueIds = new Set<string>();
-  
-  // Process deals: for featured/promoted venues, only take first special per venue
-  // For standard venues, take all their specials
-  allDeals.forEach(deal => {
-    const venueId = deal.venue?.id || 'unknown';
-    const promotionTier = deal.venue?.promotionTier;
-    
-    // If venue is featured or promoted and we haven't added a deal from this venue yet
-    if ((promotionTier === 'featured' || promotionTier === 'promoted')) {
-      if (!featuredPromotedVenueIds.has(venueId)) {
-        processedDeals.push(deal);
-        featuredPromotedVenueIds.add(venueId);
-      }
-      // Skip additional deals from this featured/promoted venue
-    } else {
-      // For standard venues, add all their deals
-      processedDeals.push(deal);
-    }
-  });
-  
-  const todayDeals = processedDeals.slice(0, 7);
-  
-  // Get first name from user name
-  const firstName = user?.name?.split(' ')[0];
+  const router = useRouter();
+  const toggleSave = (eventId: string) => (user ? toggleLike(eventId) : router.push('/login'));
 
-  // Note: Height matching removed to allow event cards to maintain their natural size
-  // Event cards now use aspect-square to maintain consistent sizing
+  const todaysEvents = getTodaysEvents();
+  const today = new Date();
+
+  // getTodaysEvents() is already sorted by promotion tier, then time
+  const todayEvents = todaysEvents
+    .filter((e) => !e.categories.includes('food-deal'))
+    .slice(0, 9)
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+  // Featured/promoted venues get one special each; standard venues show all
+  const seenPromotedVenues = new Set<string>();
+  // Only specials still running — drop any whose end time has already passed
+  const todayDeals = todaysEvents
+    .filter((e) => e.categories.includes('food-deal'))
+    .filter((deal) => !hasSpecialEnded(deal, today))
+    .filter((deal) => {
+      const tier = listingTier(deal);
+      if (tier !== 'featured' && tier !== 'promoted') return true;
+      const venueId = deal.venue?.id || 'unknown';
+      if (seenPromotedVenues.has(venueId)) return false;
+      seenPromotedVenues.add(venueId);
+      return true;
+    })
+    .slice(0, 6);
+
+  // Featured placement (max 3, one per venue): featured-tier venues' next events first,
+  // then topped up with the most-liked upcoming events
+  const upcomingNonDeals = getUpcomingEvents().filter((e) => !e.categories.includes('food-deal'));
+  const featured: Event[] = [];
+  const featuredVenues = new Set<string>();
+  for (const e of [
+    ...upcomingNonDeals.filter((e) => listingTier(e) === 'featured'),
+    ...getFeaturedEvents(),
+  ]) {
+    if (featured.length >= MAX_FEATURED) break;
+    const venueId = e.venue?.id ?? e.id;
+    if (featuredVenues.has(venueId)) continue;
+    featuredVenues.add(venueId);
+    featured.push(e);
+  }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center py-24">
-        <Loader2 size={32} className="animate-spin text-primary" />
+      <div className="flex min-h-screen items-center justify-center py-24">
+        <Loader2 size={32} className="animate-spin text-navy" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
-      {/* Hero Section - Shorter */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-secondary via-secondary/95 to-primary/80 text-white">
-        {/* Decorative elements */}
-        <div className="absolute inset-0 pattern-bg opacity-10" />
-        <div className="absolute -top-24 -right-24 w-96 h-96 bg-primary/30 rounded-full blur-3xl" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-accent/20 rounded-full blur-3xl" />
-        
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-sm text-sm mb-4 animate-fade-in">
-              <Sparkles size={14} className="text-accent" />
-              <span>What&apos;s Happening in Kingston Today</span>
-            </div>
-            <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl mb-4 animate-slide-up">
-              {user && firstName ? (
-                <>
-                  Welcome back,{' '}
-                  <span className="italic text-accent">{firstName}.</span>
-                </>
-              ) : (
-                <>
-                  Every Event.{' '}
-                  <span className="italic text-accent">Every Day.</span>
-                </>
-              )}
-            </h1>
-            <p className="text-lg text-white/80 mb-6 animate-slide-up stagger-1">
-              Live music, local events, food specials and more. Kingston, all in one place.
-            </p>
-            
-            {/* Quick Actions */}
-            <div className="flex flex-col sm:flex-row gap-3 animate-slide-up stagger-2">
-              <Link
-                href="/events"
-                className="flex items-center justify-center gap-2 px-5 py-2.5 bg-white text-secondary rounded-xl font-medium hover:bg-white/90 transition-colors"
-              >
-                Browse All Events
-              </Link>
-              <Link
-                href="/calendar"
-                className="flex items-center justify-center gap-2 px-5 py-2.5 bg-white/10 backdrop-blur-sm border border-white/20 text-white rounded-xl font-medium hover:bg-white/20 transition-colors"
-              >
-                <Calendar size={18} />
-                View Calendar
-              </Link>
-            </div>
-          </div>
+    <div>
+      {/* Hero */}
+      <section className="page-container flex flex-col gap-10 pt-10">
+        <div className="flex flex-col gap-[15px]">
+          <h1 className="display-hero">
+            What&rsquo;s
+            <br />
+            Happening
+            <br />
+            in <span className="text-sun">Kingston</span>?
+          </h1>
+          <p className="text-[16px] font-medium text-ink-muted">
+            Fill your life with experiences and cool stories to tell.
+          </p>
         </div>
-      </section>
-
-      {/* Happening Today Section */}
-      <section className="py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* Filter Section - Centered */}
-          <div className="text-center mb-10">
-            <h2 className="font-display text-2xl sm:text-3xl text-foreground mb-6">
-              What do you feel like doing today?
-            </h2>
-            <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
-              {filterButtons.map((filter) => {
-                const Icon = filter.icon;
-                const isActive = activeFilter === filter.id;
-                return (
-                  <button
-                    key={filter.id}
-                    onClick={() => setActiveFilter(isActive ? null : filter.id)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-full font-medium text-sm transition-all ${
-                      isActive
-                        ? 'bg-primary text-white shadow-md'
-                        : 'bg-muted text-foreground hover:bg-border'
-                    }`}
-                  >
-                    <Icon size={16} />
-                    {filter.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Date Header */}
-          <div className="mb-8">
-            <p className="text-primary font-medium text-sm uppercase tracking-wider mb-1">
-              {format(today, 'EEEE, MMMM d')}
-            </p>
-            <h3 className="font-display text-2xl sm:text-3xl text-foreground">
-              Happening Today
-            </h3>
-          </div>
-
-          {/* Two Column Layout - Events wider, Deals narrower */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
-            {/* Left Column - Events (3 cols wide) */}
-            <div className="lg:col-span-3 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-display text-xl text-foreground flex items-center gap-2">
-                  <Calendar size={18} className="text-primary" />
-                  Events
-                </h3>
-                <Link
-                  href="/events"
-                  className="flex items-center gap-1 text-primary hover:underline font-medium text-sm"
-                >
-                  View all
-                  <ArrowRight size={14} />
-                </Link>
-              </div>
-              
-              {todayEvents.length > 0 ? (
-                <div ref={eventsContainerRef} className="grid grid-cols-3 gap-4">
-                  {todayEvents.map((event) => (
-                    <Link
-                      key={event.id}
-                      href={`/events/${event.id}`}
-                      className="group relative aspect-square rounded-xl overflow-hidden bg-muted border border-border hover:border-primary/50 transition-all hover:shadow-lg"
-                    >
-                      {event.imageUrl ? (
-                        <SmartImage
-                          src={event.imageUrl}
-                          alt={event.title}
-                          sizes="(max-width: 1024px) 33vw, 280px"
-                          className="group-hover:scale-105 transition-transform duration-300"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-                          <Calendar size={32} className="text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                      <div className="absolute bottom-0 left-0 right-0 p-3">
-                        {event.categories[0] && (
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium text-white mb-1.5 ${categoryColors[event.categories[0] as EventCategory]}`}>
-                            {categoryLabels[event.categories[0] as EventCategory]}
-                          </span>
-                        )}
-                        <h4 className="font-medium text-white text-base line-clamp-2 leading-tight">
-                          {event.title}
-                        </h4>
-                        <div className="flex flex-col gap-0.5 mt-1">
-                          <p className="text-white/70 text-sm flex items-center gap-1">
-                            <Clock size={12} />
-                            {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
-                          </p>
-                          <p className="text-white/70 text-sm flex items-center gap-1">
-                            <MapPin size={12} />
-                            {event.venue.name}
-                          </p>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
+        <div className="relative isolate overflow-hidden rounded-[28px] p-4 sm:p-[25px] min-h-[382px] flex items-end sm:items-start">
+          {/* object-cover crops instead of distorting, so the photo keeps its aspect ratio at any size */}
+          <Image
+            src="/hero.png"
+            alt="Sunset over the Kingston waterfront"
+            fill
+            priority
+            sizes="(max-width: 1440px) 100vw, 1280px"
+            className="-z-10 h-full w-full object-cover object-bottom"
+          />
+          {featured.length > 0 && (
+            <div className="-mx-4 flex w-[calc(100%+2rem)] snap-x snap-mandatory gap-[10px] overflow-x-auto px-4 pb-1 sm:mx-0 sm:w-full sm:px-0 lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0">
+              {featured.map((event) => (
+                <div key={event.id} className="w-[85%] max-w-[405px] shrink-0 snap-start sm:w-[405px] lg:w-auto lg:max-w-none">
+                  <FeatureCard event={event} />
                 </div>
-              ) : (
-                <div className="aspect-[3/2] rounded-xl bg-muted flex items-center justify-center">
-                  <div className="text-center">
-                    <Calendar size={32} className="mx-auto text-muted-foreground mb-2" />
-                    <p className="text-muted-foreground text-sm">No events today</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Right Column - Food & Drink Specials (2 cols wide) */}
-            <div className="lg:col-span-2 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-display text-xl text-foreground flex items-center gap-2">
-                  <Utensils size={18} className="text-primary" />
-                  Food & Drink Specials
-                </h3>
-                <Link
-                  href="/events?tab=deals"
-                  className="flex items-center gap-1 text-primary hover:underline font-medium text-sm"
-                >
-                  View all
-                  <ArrowRight size={14} />
-                </Link>
-              </div>
-              
-              {todayDeals.length > 0 ? (
-                <div ref={specialsContainerRef} className="space-y-3">
-                  {todayDeals.map((deal) => (
-                    <Link
-                      key={deal.id}
-                      href={`/events/${deal.id}`}
-                      className="group flex items-center gap-4 p-3 rounded-xl bg-card border border-border hover:border-primary/50 transition-all hover:shadow-md"
-                    >
-                      <div className="w-16 h-16 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-orange-500/20 flex items-center justify-center">
-                          <Utensils size={20} className="text-primary" />
-                        </div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-foreground group-hover:text-primary transition-colors line-clamp-1">
-                          {deal.title}
-                        </h4>
-                        <p className="text-muted-foreground text-sm flex items-center gap-1 mt-0.5">
-                          <MapPin size={12} />
-                          {deal.venue.name}
-                        </p>
-                        {deal.price && (
-                          <p className="text-primary font-medium text-sm mt-1">
-                            {deal.price}
-                          </p>
-                        )}
-                      </div>
-                      <ArrowRight size={16} className="text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
-                    </Link>
-                  ))}
-                </div>
-              ) : (
-                <div className="h-full min-h-[200px] rounded-xl bg-muted flex items-center justify-center">
-                  <div className="text-center">
-                    <Utensils size={32} className="mx-auto text-muted-foreground mb-2" />
-                    <p className="text-muted-foreground text-sm">No specials today</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Featured Events */}
-      {featuredEvents.length > 0 && (
-        <section className="py-12 sm:py-16 bg-muted">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-end justify-between mb-8">
-              <div>
-                <p className="text-primary font-medium text-sm uppercase tracking-wider mb-1">
-                  Don&apos;t Miss
-                </p>
-                <h2 className="font-display text-3xl sm:text-4xl text-foreground">
-                  Featured Events
-                </h2>
-              </div>
-              <Link
-                href="/events"
-                className="hidden sm:flex items-center gap-1 text-primary hover:underline font-medium"
-              >
-                View all
-                <ArrowRight size={16} />
-              </Link>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              {featuredEvents.slice(0, 4).map((event) => (
-                <Link
-                  key={event.id}
-                  href={`/events/${event.id}`}
-                  className="group relative aspect-[16/9] rounded-2xl overflow-hidden bg-muted border border-border hover:border-primary/50 transition-all hover:shadow-xl"
-                >
-                  {event.imageUrl ? (
-                    <SmartImage
-                      src={event.imageUrl}
-                      alt={event.title}
-                      sizes="(max-width: 640px) 100vw, 50vw"
-                      className="group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-                      <Calendar size={56} className="text-muted-foreground" />
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-                  <div className="absolute bottom-0 left-0 right-0 p-5">
-                    <p className="text-white/70 text-sm mb-2">
-                      {format(parseISO(event.date), 'EEE, MMM d')} • {format(parseISO(`2000-01-01T${event.startTime}`), 'h:mm a')}
-                    </p>
-                    <h3 className="font-display text-xl sm:text-2xl text-white line-clamp-2">
-                      {event.title}
-                    </h3>
-                    <p className="text-white/70 text-sm mt-2 flex items-center gap-1">
-                      <MapPin size={14} />
-                      {event.venue.name}
-                    </p>
-                  </div>
-                </Link>
               ))}
             </div>
-          </div>
-        </section>
-      )}
+          )}
+        </div>
+      </section>
 
-      {/* CTA Section */}
-      <section className="py-12 sm:py-16 bg-gradient-to-br from-primary to-primary/80 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="font-display text-3xl sm:text-4xl mb-4">
-            Have an Event to Share?
-          </h2>
-          <p className="text-white/80 text-lg mb-6 max-w-2xl mx-auto">
-            Whether you&apos;re a venue, restaurant, or event organizer, we&apos;d love to help 
-            you reach Kingston&apos;s event-goers.
-          </p>
-          <Link
-            href="/submit"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-white text-primary rounded-xl font-medium hover:bg-white/90 transition-colors"
-          >
-            Submit Your Event
-            <ArrowRight size={18} />
-          </Link>
+      {/* Happening today */}
+      <section className="page-container pb-24 pt-10">
+        <SectionHeader
+          eyebrow={`Today · ${format(today, 'EEEE, MMMM d')}`}
+          title={
+            <>
+              Happening
+              <br />
+              today
+            </>
+          }
+          aside={
+            <>
+              <p className="text-[12px] text-ink-subtle sm:text-right">Try something new today :)</p>
+              <Link href="/events" className="btn-outline">
+                View all events →
+              </Link>
+            </>
+          }
+        />
+        <div className="mt-12">
+          {todayEvents.length > 0 ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {todayEvents.map((event) => (
+                <ExpandableTimeCard
+                  key={event.id}
+                  event={event}
+                  saved={isLiked(event.id)}
+                  onToggleSave={() => toggleSave(event.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="card flex flex-col items-start gap-4 p-8">
+              <p className="text-[22px] font-bold text-navy">Nothing listed for today yet.</p>
+              <p className="text-ink-muted">Check what&rsquo;s coming up this week instead.</p>
+              <Link href="/coming-up" className="btn-outline">
+                See what&rsquo;s coming up →
+              </Link>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Specials */}
+      <section className="bg-sky py-24">
+        <div className="page-container">
+          <SectionHeader
+            eyebrow="Food & drink"
+            title={
+              <>
+                {format(today, 'EEEE')}
+                <br />
+                specials
+              </>
+            }
+            aside={
+              <Link href="/events?tab=deals" className="btn-outline">
+                View all specials →
+              </Link>
+            }
+          />
+          <div className="mt-12 border-t border-navy">
+            {todayDeals.length > 0 ? (
+              todayDeals.map((deal) => <SpecialRow key={deal.id} event={deal} revealOnHover />)
+            ) : (
+              <p className="border-b border-navy py-8 text-[18px] text-ink-muted">No specials running right now.</p>
+            )}
+          </div>
         </div>
       </section>
     </div>

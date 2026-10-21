@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
     ],
     formats: ['image/avif', 'image/webp'],
   },
+  async redirects() {
+    return [
+      { source: '/calendar', destination: '/coming-up', permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {

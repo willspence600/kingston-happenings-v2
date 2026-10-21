@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type { Venue } from '@/types/event';
-import { MapPin, X, Plus, ChevronDown, Search } from 'lucide-react';
+import { MapPin, X, Plus, ChevronDown, Search, Check } from 'lucide-react';
 
 interface VenueSelectorProps {
   venues: Venue[];
@@ -12,6 +12,11 @@ interface VenueSelectorProps {
   onVenueSelect: (venueId: string) => void;
   onNewVenueNameChange: (name: string) => void;
   onNewVenueAddressChange: (address: string) => void;
+  /** Downtown Kingston District checkbox, shown only while adding a new venue */
+  newVenueIsDowntown?: boolean;
+  onNewVenueIsDowntownChange?: (value: boolean) => void;
+  label?: string;
+  placeholder?: string;
   required?: boolean;
   id?: string;
 }
@@ -24,6 +29,10 @@ export default function VenueSelector({
   onVenueSelect,
   onNewVenueNameChange,
   onNewVenueAddressChange,
+  newVenueIsDowntown = false,
+  onNewVenueIsDowntownChange,
+  label = 'Select a Venue',
+  placeholder = 'Type to search venues...',
   required = false,
   id,
 }: VenueSelectorProps) {
@@ -95,6 +104,7 @@ export default function VenueSelector({
     setIsOpen(false);
     onNewVenueNameChange('');
     onNewVenueAddressChange('');
+    onNewVenueIsDowntownChange?.(false);
   };
 
   const displayValue = selectedVenue
@@ -104,12 +114,12 @@ export default function VenueSelector({
   return (
     <div className="space-y-4">
       <div ref={containerRef} className="relative">
-        <label htmlFor={id} className="block text-sm font-medium text-foreground mb-2">
-          Select a Venue {required && '*'}
+        <label htmlFor={id} className="field-label">
+          {label} {required && '*'}
         </label>
         
         <div className="relative">
-          <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
+          <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-link pointer-events-none z-10" />
           <input
             ref={inputRef}
             type="text"
@@ -117,8 +127,8 @@ export default function VenueSelector({
             value={displayValue}
             onChange={(e) => handleInputChange(e.target.value)}
             onFocus={() => setIsOpen(true)}
-            placeholder="Type to search venues..."
-            className={`w-full pl-10 pr-10 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary ${
+            placeholder={placeholder}
+            className={`field pl-10 pr-10 ${
               required && !selectedVenueId && !showNewVenueFields ? 'border-red-300' : ''
             }`}
           />
@@ -140,7 +150,7 @@ export default function VenueSelector({
         </div>
 
         {isOpen && (
-          <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-xl shadow-lg max-h-64 overflow-y-auto">
+          <div className="absolute z-50 w-full mt-1 bg-white border border-line rounded-[14px] shadow-lg max-h-64 overflow-y-auto">
             {filteredVenues.length > 0 ? (
               <>
                 {filteredVenues.map((venue) => (
@@ -184,7 +194,7 @@ export default function VenueSelector({
                     <button
                       type="button"
                       onClick={handleCreateNewVenue}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2 mx-auto"
+                      className="btn-navy btn-sm mx-auto"
                     >
                       <Plus size={16} />
                       Create new venue: &quot;{searchQuery.trim()}&quot;
@@ -199,14 +209,14 @@ export default function VenueSelector({
 
       {showNewVenueFields || selectedVenueId === 'new' ? (
         <div className="space-y-4 pt-4 border-t border-border">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
-            <MapPin size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-amber-700">
+          <div className="bg-[#fff1d6] rounded-[12px] p-3 flex items-start gap-2">
+            <MapPin size={16} className="text-[#8a5a00] flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-[#8a5a00]">
               New venues require admin approval before they appear in the venue list. Please provide the complete address.
             </p>
           </div>
           <div>
-            <label htmlFor={`${id}-new-name`} className="block text-sm font-medium text-foreground mb-2">
+            <label htmlFor={`${id}-new-name`} className="field-label">
               Venue Name {required && '*'}
             </label>
             <input
@@ -216,11 +226,11 @@ export default function VenueSelector({
               onChange={(e) => onNewVenueNameChange(e.target.value)}
               placeholder="e.g., The Ale House"
               required={required && (selectedVenueId === 'new' || showNewVenueFields)}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+              className="field"
             />
           </div>
           <div>
-            <label htmlFor={`${id}-new-address`} className="block text-sm font-medium text-foreground mb-2">
+            <label htmlFor={`${id}-new-address`} className="field-label">
               Address {required && '*'}
             </label>
             <input
@@ -230,12 +240,32 @@ export default function VenueSelector({
               onChange={(e) => onNewVenueAddressChange(e.target.value)}
               placeholder="e.g., 393 Princess St, Kingston, ON"
               required={required && (selectedVenueId === 'new' || showNewVenueFields)}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+              className="field"
             />
             <p className="text-xs text-muted-foreground mt-1">
               Please provide the complete street address including city and province
             </p>
           </div>
+          {onNewVenueIsDowntownChange && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={newVenueIsDowntown}
+              onClick={() => onNewVenueIsDowntownChange(!newVenueIsDowntown)}
+              className="flex items-center gap-3 text-left text-[14px] text-navy"
+            >
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] border-[1.5px] transition-colors ${
+                  newVenueIsDowntown ? 'border-navy bg-navy text-white' : 'border-line bg-white'
+                }`}
+              >
+                {newVenueIsDowntown && <Check size={13} strokeWidth={3} />}
+              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/dk-badge.svg" alt="Downtown Kingston" width={24} height={24} className="shrink-0" />
+              This venue is part of the Downtown Kingston District
+            </button>
+          )}
         </div>
       ) : null}
     </div>

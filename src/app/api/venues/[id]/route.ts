@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getAbsoluteImageUrl } from '@/utils/url';
+import { Prisma } from '@prisma/client';
+import { parseVenueDetails } from '@/lib/venueDetails';
+import { PROMOTION_TIERS, isPromotionTier } from '@/lib/promotion';
+import { describeChanges, notifyVenueOrganizers } from '@/lib/venueNotices';
 
 // GET /api/venues/[id] - Get a single venue
 export async function GET(
@@ -66,76 +70,102 @@ export async function PUT(
 ) {
   try {
     const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
+    if (!user) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const { id } = await params;
     const body = await request.json();
-    const { name, address, neighborhood, website, imageUrl, coverImageUrl, promotionTier } = body;
 
-    console.log('API received venue update request:', { id, name, address, promotionTier });
-
-    if (!name || !address) {
-      return NextResponse.json(
-        { error: 'Name and address are required' },
-        { status: 400 }
-      );
-    }
-
-    // Validate promotionTier value
-    const validTiers = ['standard', 'promoted', 'featured'];
-    const tier = promotionTier || 'standard';
-    if (!validTiers.includes(tier)) {
-      return NextResponse.json(
-        { error: `Invalid promotion tier. Must be one of: ${validTiers.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
-    const updateData: {
-      name: string;
-      address: string;
-      neighborhood?: string | null;
-      website?: string | null;
-      imageUrl?: string | null;
-      coverImageUrl?: string | null;
-      promotionTier: string;
-    } = {
-      name,
-      address,
-      promotionTier: tier,
-    };
-    
-    // Only include optional fields if they are explicitly provided in the request
-    // This allows clearing fields by sending null, or updating them with new values
-    if (neighborhood !== undefined) {
-      updateData.neighborhood = neighborhood === '' ? null : neighborhood;
-    }
-    if (website !== undefined) {
-      updateData.website = website === '' ? null : website;
-    }
-    if (imageUrl !== undefined) {
-      updateData.imageUrl = imageUrl === '' ? null : imageUrl;
-    }
-    if (coverImageUrl !== undefined) {
-      updateData.coverImageUrl = coverImageUrl === '' ? null : coverImageUrl;
-    }
-
-    console.log('Updating venue with data:', updateData);
-
-    try {
+    // Approved organizers linked to this venue can update its details (not its name, address or promotion settings)
+    if (user.role !== 'admin') {
+      if (!user.organizerApproved || !user.organizerVenueIds.includes(id)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
       const venue = await prisma.venue.update({
         where: { id },
-        data: updateData,
+        data: {
+          ...parseVenueDetails(body),
+          ...(body.website !== undefined ? { website: body.website || null } : {}),
+        },
       });
-      
-      console.log('Venue updated successfully:', venue);
       return NextResponse.json({ venue });
-    } catch (prismaError) {
-      console.error('Prisma update error:', prismaError);
-      throw prismaError;
     }
+
+    const existing = await prisma.venue.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: 'Venue not found' }, { status: 404 });
+    }
+
+    // Admins can send any subset of fields; anything left out is unchanged
+    const { name, address, neighborhood, website, imageUrl, coverImageUrl, promotionTier, eventPromotionTier, specialPromotionTier, isMajor, isDowntownDistrict, status } = body;
+    const optionalString = (value: unknown) => (value === '' || value === null ? null : String(value));
+    const updateData: Prisma.VenueUpdateInput = {};
+
+    if (name !== undefined) {
+      if (!String(name).trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+      updateData.name = String(name).trim();
+    }
+    if (address !== undefined) {
+      if (!String(address).trim()) return NextResponse.json({ error: 'Address is required' }, { status: 400 });
+      updateData.address = String(address).trim();
+    }
+    if (neighborhood !== undefined) updateData.neighborhood = optionalString(neighborhood);
+    if (website !== undefined) updateData.website = optionalString(website);
+    if (imageUrl !== undefined) updateData.imageUrl = optionalString(imageUrl);
+    if (coverImageUrl !== undefined) updateData.coverImageUrl = optionalString(coverImageUrl);
+    if (typeof isMajor === 'boolean') updateData.isMajor = isMajor;
+    if (typeof isDowntownDistrict === 'boolean') updateData.isDowntownDistrict = isDowntownDistrict;
+    if (status === 'approved' || status === 'pending') updateData.status = status;
+
+    for (const [key, value] of [['promotionTier', promotionTier], ['eventPromotionTier', eventPromotionTier], ['specialPromotionTier', specialPromotionTier]] as const) {
+      if (value === undefined) continue;
+      if (!isPromotionTier(value)) {
+        return NextResponse.json({ error: `Invalid promotion tier. Must be one of: ${PROMOTION_TIERS.join(', ')}` }, { status: 400 });
+      }
+      updateData[key] = value;
+    }
+    // The legacy single tier follows the events tier
+    if (eventPromotionTier !== undefined) updateData.promotionTier = eventPromotionTier;
+    else if (promotionTier !== undefined && eventPromotionTier === undefined && specialPromotionTier === undefined) {
+      updateData.eventPromotionTier = promotionTier;
+      updateData.specialPromotionTier = promotionTier;
+    }
+
+    const details = parseVenueDetails(body);
+    const venue = await prisma.venue.update({
+      where: { id },
+      data: { ...updateData, ...details },
+    });
+
+    // Let the venue's organizers know what an admin changed (promotion settings stay internal)
+    const changes = describeChanges(
+      existing as unknown as Record<string, unknown>,
+      venue as unknown as Record<string, unknown>,
+      {
+        name: 'Name',
+        address: 'Address',
+        neighborhood: 'Neighbourhood',
+        website: 'Website',
+        phone: 'Phone',
+        instagram: 'Instagram',
+        venueTypes: 'Venue type',
+        about: 'About',
+        hours: 'Opening hours',
+        accessibility: 'Accessibility',
+        accessibilityNotes: 'Accessibility notes',
+        imageUrl: 'Logo',
+        coverImageUrl: 'Cover photo',
+        isMajor: 'Major Venue',
+        isDowntownDistrict: 'Downtown Kingston',
+      },
+      ['about', 'hours', 'imageUrl', 'coverImageUrl', 'accessibilityNotes']
+    );
+    if (changes.length > 0) {
+      await notifyVenueOrganizers(venue.id, venue.name, 'An admin updated your venue details', changes);
+    }
+
+    return NextResponse.json({ venue });
   } catch (error) {
     console.error('Update venue error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';

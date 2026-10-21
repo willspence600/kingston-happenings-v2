@@ -1,196 +1,136 @@
-'use client';
-
-import { useState } from 'react';
 import Link from 'next/link';
-import { Heart, Users, MapPin, Calendar, Mail, ArrowRight, Star } from 'lucide-react';
-import { Modal } from '@/components';
+import { Bell, Bookmark, Calendar, Heart, Mail, MapPin, Send, Users } from 'lucide-react';
+import { Rings } from '@/components/brand';
+import prisma from '@/lib/prisma';
 
-export default function AboutPage() {
-  const [showContactModal, setShowContactModal] = useState(false);
+const CONTACT_EMAIL = 'kingstonhappenings.ca@gmail.com';
 
+// Counts are refreshed every 5 minutes
+export const revalidate = 300;
+
+async function getStats() {
+  try {
+    const [events, venues] = await Promise.all([
+      // Every event ever listed; each date of a recurring event counts once
+      prisma.event.count({
+        where: { status: { in: ['approved', 'cancelled'] }, NOT: { categories: { some: { name: 'food-deal' } } } },
+      }),
+      // Same set as the Venues page
+      prisma.venue.count({ where: { status: 'approved' } }),
+    ]);
+    return { events: events.toLocaleString('en-CA'), venues: venues.toLocaleString('en-CA') };
+  } catch (error) {
+    console.error('[About] Failed to load stats:', error);
+    return { events: '—', venues: '—' };
+  }
+}
+
+export default async function AboutPage() {
+  const stats = await getStats();
   return (
-    <div className="min-h-screen">
+    <div>
       {/* Hero */}
-      <section className="relative bg-gradient-to-br from-secondary via-secondary/95 to-primary/80 text-white py-20 sm:py-28 overflow-hidden">
-        <div className="absolute inset-0 pattern-bg opacity-10" />
-        <div className="absolute -top-24 -right-24 w-96 h-96 bg-primary/30 rounded-full blur-3xl" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-accent/20 rounded-full blur-3xl" />
-        
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h1 className="font-display text-5xl sm:text-6xl mb-6">
-            About <span className="italic text-accent">Kingston Happenings</span>
-          </h1>
-          <p className="text-xl text-white/80 max-w-2xl mx-auto">
-            Your comprehensive page to view everything happening in Kingston.
-          </p>
-        </div>
-      </section>
-
-      {/* Our Story */}
-      <section className="py-16 sm:py-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <p className="text-primary font-medium text-sm uppercase tracking-wider mb-2">
-                Our Story
-              </p>
-              <h2 className="font-display text-3xl sm:text-4xl text-foreground mb-6">
-                Connecting Kingston Through Events
-              </h2>
-              <div className="space-y-4 text-muted-foreground">
-                <p>
-                  Kingston Happenings was born from a simple idea: make it easy for 
-                  everyone to discover what&apos;s going on in our beautiful city. Whether 
-                  you&apos;re a lifelong resident, a Queen&apos;s student, or just visiting, 
-                  there&apos;s always something happening in Kingston.
-                </p>
-                <p>
-                  From trivia nights at local pubs to symphony performances at the Grand 
-                  Theatre, from farmers markets at Market Square to hockey games at Leon&apos;s 
-                  Centre — we curate it all in one place so you never miss out.
-                </p>
-                <p>
-                  Our mission is to support Kingston&apos;s vibrant community of venues, 
-                  restaurants, artists, and event organizers by helping them reach the 
-                  people who want to be there.
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-card border border-border rounded-2xl p-6 text-center">
-                <Calendar size={32} className="text-primary mx-auto mb-3" />
-                <p className="text-3xl font-display text-foreground mb-1">X</p>
-                <p className="text-sm text-muted-foreground">Events Listed</p>
-              </div>
-              <div className="bg-card border border-border rounded-2xl p-6 text-center">
-                <MapPin size={32} className="text-primary mx-auto mb-3" />
-                <p className="text-3xl font-display text-foreground mb-1">X</p>
-                <p className="text-sm text-muted-foreground">Local Venues</p>
-              </div>
-              <div className="bg-card border border-border rounded-2xl p-6 text-center">
-                <Users size={32} className="text-primary mx-auto mb-3" />
-                <p className="text-3xl font-display text-foreground mb-1">X</p>
-                <p className="text-sm text-muted-foreground">Monthly Visitors</p>
-              </div>
-              <div className="bg-card border border-border rounded-2xl p-6 text-center">
-                <Heart size={32} className="text-primary mx-auto mb-3" />
-                <p className="text-3xl font-display text-foreground mb-1">100%</p>
-                <p className="text-sm text-muted-foreground">Community Driven</p>
-              </div>
-            </div>
+      <section className="relative overflow-hidden bg-navy text-white">
+        <div className="page-container relative flex min-h-[440px] items-center py-16">
+          <div className="relative z-10">
+            <p className="eyebrow !text-sun">— About us</p>
+            <h1 className="display-hero !text-white mt-4">
+              About
+              <br />
+              Kingston
+              <br />
+              Happenings
+            </h1>
+            <p className="mt-5 text-[16px] text-on-dark-muted">made and grown by Queen&rsquo;s Alumni</p>
           </div>
+          <Rings className="pointer-events-none absolute right-4 top-1/2 hidden w-[400px] -translate-y-1/2 md:block lg:right-20" />
         </div>
       </section>
 
-      {/* Features */}
-      <section className="py-16 sm:py-24 bg-muted">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <p className="text-primary font-medium text-sm uppercase tracking-wider mb-2">
-              What We Offer
-            </p>
-            <h2 className="font-display text-3xl sm:text-4xl text-foreground">
-              Everything You Need
+      {/* Story */}
+      <section className="page-container py-20">
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:items-center">
+          <div>
+            <p className="eyebrow-sm">— Our story</p>
+            <h2 className="display-md mt-3">
+              Connecting Kingston
+              <br />
+              through events
             </h2>
+            <div className="mt-5 flex max-w-[520px] flex-col gap-4 text-[16px] leading-[1.55] text-navy">
+              <p>
+                What makes a city your home? We made Kingston Happenings to get people out and about, experiencing activities
+                outside your radar, inside your city.
+              </p>
+              <p>This is the place to find local gems and broaden your community.</p>
+              <p>
+                Our mission is to support Kingston&rsquo;s venues, restaurants and artists by helping them reach the people who
+                want to be there.
+              </p>
+            </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-6xl mx-auto">
-            <div className="bg-card border border-border rounded-2xl p-8">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                <Users size={24} className="text-primary" />
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { icon: <Calendar size={18} />, value: stats.events, label: 'Events listed', tone: 'bg-sun text-navy' },
+              { icon: <MapPin size={18} />, value: stats.venues, label: 'Local venues', tone: 'card text-navy' },
+              { icon: <Users size={18} />, value: 'X', label: 'Monthly visitors', tone: 'card text-navy' },
+              { icon: <Heart size={18} className="text-sun" />, value: '100%', label: 'Community driven', tone: 'bg-navy text-white' },
+            ].map((s) => (
+              <div key={s.label} className={`flex min-h-[150px] flex-col justify-between rounded-[22px] p-5 ${s.tone}`}>
+                {s.icon}
+                <div>
+                  <p className="text-[36px] font-bold leading-none tracking-[-0.03em]">{s.value}</p>
+                  <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] opacity-80">{s.label}</p>
+                </div>
               </div>
-              <h3 className="font-display text-xl text-foreground mb-3">
-                For Users
-              </h3>
-              <p className="text-muted-foreground leading-relaxed mb-4">
-                Discover everything happening in Kingston with our comprehensive event listings.
-              </p>
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2 text-muted-foreground">
-                  <Star size={16} className="text-primary flex-shrink-0 mt-0.5" />
-                  <span>Comprehensive listings of all events and food & drink specials</span>
-                </li>
-                <li className="flex items-start gap-2 text-muted-foreground">
-                  <Star size={16} className="text-primary flex-shrink-0 mt-0.5" />
-                  <span>Custom area to save your favorite events</span>
-                </li>
-                <li className="flex items-start gap-2 text-muted-foreground">
-                  <Star size={16} className="text-primary flex-shrink-0 mt-0.5" />
-                  <span>Get notified about events you pick</span>
-                </li>
-              </ul>
-            </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
-            <div className="bg-card border border-border rounded-2xl p-8">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                <Calendar size={24} className="text-primary" />
+      {/* Why */}
+      <section className="bg-sky py-20">
+        <div className="page-container">
+          <p className="eyebrow-sm">— Why use it</p>
+          <h2 className="display-section mt-4">Made for you</h2>
+          <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
+            {[
+              { icon: <Bookmark size={16} />, title: 'Save your favourites', body: 'Keep a personal list of events and specials in My Events.' },
+              { icon: <Bell size={16} />, title: 'Get reminders', body: 'Get notified about the events you pick so you never forget.' },
+              { icon: <Send size={16} />, title: 'Easy submissions', body: 'Venues and organizers can post events and specials in minutes.' },
+            ].map((f) => (
+              <div key={f.title} className="rounded-[22px] bg-white p-6">
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-sun text-navy">{f.icon}</span>
+                <p className="mt-5 text-[18px] font-bold text-navy">{f.title}</p>
+                <p className="mt-2 text-[14px] leading-[1.5] text-ink-muted">{f.body}</p>
               </div>
-              <h3 className="font-display text-xl text-foreground mb-3">
-                For Organizers
-              </h3>
-              <p className="text-muted-foreground leading-relaxed mb-4">
-                We make it easier than ever to showcase all of your venue&apos;s events and specials.
-              </p>
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2 text-muted-foreground">
-                  <Star size={16} className="text-primary flex-shrink-0 mt-0.5" />
-                  <span>Easy event and special submission process</span>
-                </li>
-                <li className="flex items-start gap-2 text-muted-foreground">
-                  <Star size={16} className="text-primary flex-shrink-0 mt-0.5" />
-                  <span>Put all your venue&apos;s events and specials in one place</span>
-                </li>
-                <li className="flex items-start gap-2 text-muted-foreground">
-                  <Star size={16} className="text-primary flex-shrink-0 mt-0.5" />
-                  <span>Reach everyone in Kingston on a website they all have access to</span>
-                </li>
-              </ul>
-            </div>
+            ))}
           </div>
         </div>
       </section>
 
       {/* CTA */}
-      <section className="py-16 sm:py-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-gradient-to-br from-primary to-primary/80 rounded-3xl p-8 sm:p-12 text-center text-white">
-            <h2 className="font-display text-3xl sm:text-4xl mb-4">
-              Have Questions?
+      <section className="bg-sun py-16">
+        <div className="page-container flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="display-md">
+              Have an event
+              <br />
+              to share?
             </h2>
-            <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">
-              We&apos;d love to hear from you. Whether you&apos;re an event organizer, 
-              venue owner, or just curious, don&apos;t hesitate to reach out.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <button
-                onClick={() => setShowContactModal(true)}
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-primary rounded-xl font-medium hover:bg-white/90 transition-colors"
-              >
-                <Mail size={18} />
-                Contact Us
-              </button>
-              <Link
-                href="/submit"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white/10 border border-white/20 rounded-xl font-medium hover:bg-white/20 transition-colors"
-              >
-                Submit an Event
-                <ArrowRight size={18} />
-              </Link>
-            </div>
+            <p className="mt-4 text-[15px] text-navy">Venues, restaurants and organizers — we&rsquo;d love to help you reach Kingston.</p>
+          </div>
+          <div className="flex flex-col items-start gap-3 md:items-end">
+            <Link href="/submit" className="btn-navy">
+              Submit your event →
+            </Link>
+            <a href={`mailto:${CONTACT_EMAIL}`} className="flex items-center gap-1.5 text-[13px] font-medium text-navy hover:underline">
+              <Mail size={14} />
+              {CONTACT_EMAIL}
+            </a>
           </div>
         </div>
       </section>
-
-      {/* Contact Modal */}
-      <Modal
-        isOpen={showContactModal}
-        onClose={() => setShowContactModal(false)}
-        title="Contact Us"
-        message="Please email us at kingstonhappenings.ca@gmail.com"
-        type="alert"
-        confirmText="OK"
-      />
     </div>
   );
 }
-

@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, useRef, ReactNode, useC
 import { Event, Venue, EventCategory } from '@/types/event';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
+import { listingPriority } from '@/lib/promotion';
 
 interface EventsContextType {
   events: Event[];
@@ -40,6 +41,7 @@ interface EventSubmission {
   venueId?: string;
   newVenueName?: string;
   newVenueAddress?: string;
+  newVenueIsDowntown?: boolean;
   categories: EventCategory[];
   price?: string;
   ticketUrl?: string;
@@ -306,15 +308,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Helper function to get promotion tier priority
-  const getPromotionTierPriority = (tier?: string): number => {
-    switch (tier) {
-      case 'featured': return 3;
-      case 'promoted': return 2;
-      case 'standard': return 1;
-      default: return 1;
-    }
-  };
 
   // Query functions
   const getEventById = (id: string) => events.find(e => e.id === id);
@@ -322,8 +315,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const getEventsByDate = (date: string) => {
     const eventsForDate = events.filter(e => e.date === date);
     return eventsForDate.sort((a, b) => {
-      const aPriority = getPromotionTierPriority(a.venue?.promotionTier);
-      const bPriority = getPromotionTierPriority(b.venue?.promotionTier);
+      const aPriority = listingPriority(a);
+      const bPriority = listingPriority(b);
       if (bPriority !== aPriority) {
         return bPriority - aPriority; // Higher priority first
       }
@@ -373,8 +366,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
           }
           
           // Secondary sort: venue promotion tier (higher priority first)
-          const aPriority = getPromotionTierPriority(a.venue?.promotionTier);
-          const bPriority = getPromotionTierPriority(b.venue?.promotionTier);
+          const aPriority = listingPriority(a);
+          const bPriority = listingPriority(b);
           if (bPriority !== aPriority) {
             return bPriority - aPriority;
           }
@@ -416,8 +409,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     const upcoming = events
       .filter(e => e.date >= format(new Date(), 'yyyy-MM-dd'))
       .sort((a, b) => {
-        const aPriority = getPromotionTierPriority(a.venue?.promotionTier);
-        const bPriority = getPromotionTierPriority(b.venue?.promotionTier);
+        const aPriority = listingPriority(a);
+        const bPriority = listingPriority(b);
         if (bPriority !== aPriority) {
           return bPriority - aPriority; // Higher priority first
         }

@@ -196,12 +196,12 @@ export default function DatePicker({
           value={displayValue}
           onClick={() => setIsOpen(!isOpen)}
           placeholder={placeholder}
-          className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary cursor-pointer"
+          className="field pl-10 cursor-pointer"
         />
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 bg-card border border-border rounded-xl shadow-lg z-50 min-w-[280px]">
+        <div className="absolute top-full left-0 mt-2 bg-white border border-line rounded-[18px] shadow-[0_18px_40px_-12px_rgba(27,42,65,0.25)] z-50 min-w-[280px]">
           {renderCalendar()}
         </div>
       )}

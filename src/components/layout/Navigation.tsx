@@ -1,22 +1,28 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useMemo } from 'react';
-import { Menu, X, Calendar, Home, MapPin, Plus, Search, Info, User, LogOut, Shield, Heart } from 'lucide-react';
+import { Menu, X, User, LogOut, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
+import { Wordmark } from '@/components/brand';
+import { useOrganizerVerification } from '@/hooks/useOrganizerVerification';
+import { useVenueNotices } from '@/hooks/useVenueNotices';
 
 const navLinks = [
-  { href: '/', label: 'Home', icon: Home },
-  { href: '/events', label: 'Browse', icon: Search },
-  { href: '/calendar', label: 'Calendar', icon: Calendar },
-  { href: '/venues', label: 'Venues', icon: MapPin },
-  { href: '/my-events', label: 'My Events', icon: Heart },
-  { href: '/about', label: 'About', icon: Info },
+  { href: '/', label: 'Today' },
+  { href: '/events', label: 'Browse' },
+  { href: '/coming-up', label: 'Coming up' },
+  { href: '/venues', label: 'Venues' },
+  { href: '/my-events', label: 'My Events' },
 ];
+
+function isActivePath(pathname: string, href: string) {
+  if (href === '/') return pathname === '/';
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -25,7 +31,18 @@ export default function Navigation() {
   const { pendingEvents } = useEvents();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  
+  const { organizerApproved, organizerVenueIds } = useOrganizerVerification();
+  const { notices } = useVenueNotices();
+  // Approved organizers linked to a venue get a My Venue tab (with a badge for admin changes)
+  const showMyVenue = user?.role === 'organizer' && organizerApproved && organizerVenueIds.length > 0;
+  const links = showMyVenue ? [...navLinks, { href: '/my-venue', label: 'My Venue' }] : navLinks;
+  const noticeBadge = (href: string) =>
+    href === '/my-venue' && notices.length > 0 ? (
+      <span className="ml-0.5 rounded-full bg-coral px-1.5 py-0.5 text-[10px] font-bold leading-none text-white" aria-label={`${notices.length} venue updates`}>
+        {notices.length}
+      </span>
+    ) : null;
+
   const pendingCount = useMemo(() => {
     // Count unique series (or standalone events) — one badge per series, not per occurrence
     const seen = new Set<string>();
@@ -46,304 +63,211 @@ export default function Navigation() {
     router.push('/');
   };
 
-  return (
-    <header className="sticky top-0 z-50 glass border-b border-border">
-      <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 group">
-            <Image
-              src="/kh-logo.png"
-              alt="Kingston Happenings"
-              width={40}
-              height={40}
-              className="w-10 h-10 transform group-hover:rotate-3 transition-transform"
-              priority
-            />
-            <div className="hidden sm:block">
-              <span className="font-display text-xl text-foreground">Kingston</span>
-              <span className="font-display text-xl text-primary ml-1">Happenings</span>
-            </div>
-          </Link>
+  const linkHref = (href: string) => (href === '/my-events' && !user ? '/login?redirect=/my-events' : href);
+  const initials = user?.name
+    ?.split(' ')
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-1">
-            {navLinks.map((link) => {
-              const isActive = pathname === link.href;
-              if (link.href === '/my-events' && !user) {
-                return (
-                  <Link
-                    key={link.href}
-                    href="/login?redirect=/my-events"
-                    className="px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                  >
-                    {link.label}
-                  </Link>
-                );
-              }
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    isActive
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-            {isAdmin && (
+  return (
+    <header className="sticky top-0 z-50 bg-white border-b border-line">
+      <nav className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-6 px-4 sm:px-8 lg:px-20">
+        <Wordmark />
+
+        {/* Desktop links */}
+        <div className="hidden lg:flex items-center gap-7">
+          {links.map((link) => {
+            const active = isActivePath(pathname, link.href);
+            return (
               <Link
-                href="/admin"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
-                  pathname === '/admin'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                key={link.href}
+                href={linkHref(link.href)}
+                className={`flex items-center gap-1.5 whitespace-nowrap text-[12px] uppercase tracking-[0.1em] text-navy hover:opacity-70 ${
+                  active ? 'font-bold' : 'font-normal'
                 }`}
               >
-                <Shield size={14} />
-                Admin
-                {pendingCount > 0 && (
-                  <span className={`ml-1 px-1.5 py-0.5 text-xs font-semibold rounded-full ${
-                    pathname === '/admin'
-                      ? 'bg-white/20 text-white'
-                      : 'bg-orange-500 text-white'
-                  }`}>
-                    {pendingCount}
-                  </span>
-                )}
+                {active && <span className="h-1.5 w-1.5 rounded-full bg-coral" />}
+                {link.label}
+                {noticeBadge(link.href)}
               </Link>
-            )}
-          </div>
-
-          {/* CTA Button & User Menu */}
-          <div className="hidden md:flex items-center gap-3">
+            );
+          })}
+          {isAdmin && (
             <Link
-              href="/submit"
-              className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+              href="/admin"
+              className={`flex items-center gap-1.5 whitespace-nowrap text-[12px] uppercase tracking-[0.1em] text-navy hover:opacity-70 ${
+                isActivePath(pathname, '/admin') ? 'font-bold' : 'font-normal'
+              }`}
             >
-              <Plus size={16} />
-              Submit Event
+              {isActivePath(pathname, '/admin') && <span className="h-1.5 w-1.5 rounded-full bg-coral" />}
+              Admin
+              {pendingCount > 0 && (
+                <span className="ml-0.5 rounded-full bg-sun px-1.5 py-0.5 text-[10px] font-bold leading-none text-navy">
+                  {pendingCount}
+                </span>
+              )}
             </Link>
-            
-            {authLoading ? (
-              <div className="w-24 h-9 rounded-lg bg-muted animate-pulse" />
-            ) : user ? (
-              <div className="relative">
-                <button
-                  onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted transition-colors"
-                >
-                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
-                    <User size={14} className="text-primary" />
-                  </div>
-                  <span className="text-sm font-medium max-w-[100px] truncate">{user.name}</span>
-                </button>
-
-                <AnimatePresence>
-                  {userMenuOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-10"
-                        onClick={() => setUserMenuOpen(false)}
-                      />
-                      <motion.div
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        className="absolute right-0 top-full mt-2 w-56 bg-card border border-border rounded-xl shadow-lg z-20 overflow-hidden"
-                      >
-                        <div className="px-4 py-3 border-b border-border">
-                          <p className="font-medium text-foreground truncate">{user.name}</p>
-                          <p className="text-sm text-muted-foreground truncate">{user.email}</p>
-                          <span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${
-                            user.role === 'admin' 
-                              ? 'bg-red-100 text-red-700' 
-                              : user.role === 'organizer'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-gray-100 text-gray-700'
-                          }`}>
-                            {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-                          </span>
-                        </div>
-                        <div className="py-2">
-                          <Link
-                            href="/account"
-                            onClick={() => setUserMenuOpen(false)}
-                            className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                          >
-                            <User size={16} />
-                            My Account
-                          </Link>
-                          {isAdmin && (
-                            <Link
-                              href="/admin"
-                              onClick={() => setUserMenuOpen(false)}
-                              className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                            >
-                              <Shield size={16} />
-                              Admin Dashboard
-                            </Link>
-                          )}
-                          <button
-                            onClick={handleLogout}
-                            className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                          >
-                            <LogOut size={16} />
-                            Sign Out
-                          </button>
-                        </div>
-                      </motion.div>
-                    </>
-                  )}
-                </AnimatePresence>
-              </div>
-            ) : (
-              <Link
-                href="/login"
-                className="px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
-              >
-                Sign In
-              </Link>
-            )}
-          </div>
-
-          {/* Mobile Menu Button */}
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg hover:bg-muted transition-colors"
-            aria-label="Toggle menu"
-          >
-            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          )}
         </div>
+
+        {/* Actions */}
+        <div className="hidden lg:flex items-center gap-2.5">
+          {authLoading ? (
+            <div className="h-11 w-[89px] rounded-full bg-sky-soft animate-pulse" />
+          ) : user ? (
+            <div className="relative">
+              <button
+                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                className="flex h-11 items-center gap-2 rounded-full border-[1.5px] border-line pl-1.5 pr-4 text-sm font-medium text-navy hover:border-navy transition-colors"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-sun text-[12px] font-bold text-navy">
+                  {initials || <User size={14} />}
+                </span>
+                <span className="max-w-[110px] truncate">{user.name}</span>
+              </button>
+
+              <AnimatePresence>
+                {userMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
+                    <motion.div
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      className="absolute right-0 top-full z-20 mt-2 w-60 overflow-hidden rounded-[18px] border border-line bg-white shadow-[0_18px_40px_-12px_rgba(27,42,65,0.25)]"
+                    >
+                      <div className="border-b border-line px-4 py-3">
+                        <p className="truncate font-bold text-navy">{user.name}</p>
+                        <p className="truncate text-[13px] text-ink-muted">{user.email}</p>
+                        <span className="tag mt-2 bg-sun text-navy">
+                          {user.role === 'user' ? 'Event-goer' : user.role}
+                        </span>
+                      </div>
+                      <div className="py-2">
+                        <Link
+                          href="/account"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex items-center gap-2 px-4 py-2 text-sm text-navy hover:bg-sky-soft"
+                        >
+                          <User size={16} />
+                          Your account
+                        </Link>
+                        {isAdmin && (
+                          <Link
+                            href="/admin"
+                            onClick={() => setUserMenuOpen(false)}
+                            className="flex items-center gap-2 px-4 py-2 text-sm text-navy hover:bg-sky-soft"
+                          >
+                            <Shield size={16} />
+                            Admin dashboard
+                          </Link>
+                        )}
+                        <button
+                          onClick={handleLogout}
+                          className="flex w-full items-center gap-2 px-4 py-2 text-sm text-danger hover:bg-danger-tint"
+                        >
+                          <LogOut size={16} />
+                          Sign out
+                        </button>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
+          ) : (
+            <Link href="/login" className="btn-ghost">
+              Sign in
+            </Link>
+          )}
+          <Link href="/submit" className="btn-sun">
+            Submit event
+          </Link>
+        </div>
+
+        {/* Mobile toggle */}
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="lg:hidden flex h-11 w-11 items-center justify-center rounded-full border-[1.5px] border-line text-navy"
+          aria-label="Toggle menu"
+        >
+          {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
       </nav>
 
-      {/* Mobile Menu */}
+      {/* Mobile menu */}
       <AnimatePresence>
         {mobileMenuOpen && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="md:hidden border-t border-border bg-background"
+            className="lg:hidden overflow-hidden border-t border-line bg-white"
           >
-            <div className="px-4 py-4 space-y-2">
-              {user && (
-                <div className="flex items-center gap-3 px-4 py-3 bg-muted rounded-lg mb-4">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <User size={20} className="text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">{user.name}</p>
-                    <p className="text-sm text-muted-foreground">{user.email}</p>
-                  </div>
-                </div>
-              )}
-              
-              {navLinks.map((link) => {
-                const Icon = link.icon;
-                const isActive = pathname === link.href;
-                if (link.href === '/my-events' && !user) {
-                  return (
-                    <Link
-                      key={link.href}
-                      href="/login?redirect=/my-events"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                    >
-                      <Icon size={20} />
-                      {link.label}
-                    </Link>
-                  );
-                }
+            <div className="flex flex-col gap-1 px-4 py-4">
+              {links.map((link) => {
+                const active = isActivePath(pathname, link.href);
                 return (
                   <Link
                     key={link.href}
-                    href={link.href}
+                    href={linkHref(link.href)}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                      isActive
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                    className={`flex items-center gap-2 rounded-[14px] px-4 py-3 text-[13px] uppercase tracking-[0.1em] text-navy ${
+                      active ? 'bg-sky-soft font-bold' : ''
                     }`}
                   >
-                    <Icon size={20} />
+                    {active && <span className="h-1.5 w-1.5 rounded-full bg-coral" />}
                     {link.label}
+                    {noticeBadge(link.href)}
                   </Link>
                 );
               })}
-              
+              <Link
+                href="/about"
+                onClick={() => setMobileMenuOpen(false)}
+                className="rounded-[14px] px-4 py-3 text-[13px] uppercase tracking-[0.1em] text-navy"
+              >
+                About
+              </Link>
               {isAdmin && (
                 <Link
                   href="/admin"
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                    pathname === '/admin'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                  }`}
+                  className="flex items-center gap-2 rounded-[14px] px-4 py-3 text-[13px] uppercase tracking-[0.1em] text-navy"
                 >
-                  <Shield size={20} />
-                  Admin Dashboard
+                  Admin
                   {pendingCount > 0 && (
-                    <span className={`ml-auto px-2 py-0.5 text-xs font-semibold rounded-full ${
-                      pathname === '/admin'
-                        ? 'bg-white/20 text-white'
-                        : 'bg-orange-500 text-white'
-                    }`}>
-                      {pendingCount}
-                    </span>
+                    <span className="rounded-full bg-sun px-1.5 py-0.5 text-[10px] font-bold leading-none">{pendingCount}</span>
                   )}
                 </Link>
               )}
-              
-              <hr className="border-border my-2" />
-              
-              <Link
-                href="/submit"
-                onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 bg-secondary text-secondary-foreground rounded-lg"
-              >
-                <Plus size={20} />
-                Submit Event
-              </Link>
-              
-              {authLoading ? (
-                <div className="h-12 rounded-lg bg-muted animate-pulse" />
-              ) : user ? (
-                <>
-                  <Link
-                    href="/account"
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="flex items-center gap-3 px-4 py-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg"
-                  >
-                    <User size={20} />
-                    My Account
-                  </Link>
-                  <button
-                    onClick={() => {
-                      handleLogout();
-                      setMobileMenuOpen(false);
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 rounded-lg"
-                  >
-                    <LogOut size={20} />
-                    Sign Out
-                  </button>
-                </>
-              ) : (
-                <Link
-                  href="/login"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center justify-center px-4 py-3 border border-border rounded-lg"
-                >
-                  Sign In
+              <div className="mt-3 flex flex-col gap-2 border-t border-line pt-4">
+                <Link href="/submit" onClick={() => setMobileMenuOpen(false)} className="btn-sun w-full">
+                  Submit event
                 </Link>
-              )}
+                {authLoading ? null : user ? (
+                  <>
+                    <Link href="/account" onClick={() => setMobileMenuOpen(false)} className="btn-ghost w-full">
+                      Your account
+                    </Link>
+                    <button
+                      onClick={() => {
+                        handleLogout();
+                        setMobileMenuOpen(false);
+                      }}
+                      className="btn w-full text-danger font-medium"
+                    >
+                      Sign out
+                    </button>
+                  </>
+                ) : (
+                  <Link href="/login" onClick={() => setMobileMenuOpen(false)} className="btn-ghost w-full">
+                    Sign in
+                  </Link>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -351,4 +275,3 @@ export default function Navigation() {
     </header>
   );
 }
-

@@ -23,11 +23,11 @@ export function Toast({ isOpen, message, type = 'info', onClose, duration = 3000
   const getStyle = () => {
     switch (type) {
       case 'success':
-        return 'bg-green-600 text-white';
+        return 'bg-navy text-white';
       case 'error':
-        return 'bg-red-600 text-white';
+        return 'bg-danger text-white';
       default:
-        return 'bg-secondary text-secondary-foreground';
+        return 'bg-sun text-navy';
     }
   };
 
@@ -49,7 +49,7 @@ export function Toast({ isOpen, message, type = 'info', onClose, duration = 3000
           initial={{ opacity: 0, y: 50, x: '-50%' }}
           animate={{ opacity: 1, y: 0, x: '-50%' }}
           exit={{ opacity: 0, y: 50, x: '-50%' }}
-          className={`fixed bottom-6 left-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg ${getStyle()}`}
+          className={`fixed bottom-6 left-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-full shadow-lg ${getStyle()}`}
         >
           {getIcon()}
           <span className="text-sm font-medium">{message}</span>

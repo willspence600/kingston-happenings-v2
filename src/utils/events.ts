@@ -4,22 +4,15 @@
  */
 
 import type { Event, Venue } from '@/types/event';
+import { isFreePrice } from './price';
+import { listingPriority, tierPriority } from '@/lib/promotion';
 
 /**
  * Get the priority value for a venue's promotion tier
  * Used for sorting events by promotional importance
  */
 export function getPromotionTierPriority(tier?: string): number {
-  switch (tier) {
-    case 'featured':
-      return 3;
-    case 'promoted':
-      return 2;
-    case 'standard':
-      return 1;
-    default:
-      return 1;
-  }
+  return tierPriority(tier);
 }
 
 /**
@@ -27,8 +20,8 @@ export function getPromotionTierPriority(tier?: string): number {
  */
 export function sortEventsByPromotion(events: Event[]): Event[] {
   return [...events].sort((a, b) => {
-    const aPriority = getPromotionTierPriority(a.venue?.promotionTier);
-    const bPriority = getPromotionTierPriority(b.venue?.promotionTier);
+    const aPriority = listingPriority(a);
+    const bPriority = listingPriority(b);
     if (bPriority !== aPriority) {
       return bPriority - aPriority;
     }
@@ -88,7 +81,7 @@ export function filterByDate(events: Event[], date: string): Event[] {
  * Check if an event is free
  */
 export function isEventFree(event: Event): boolean {
-  return !event.price || event.price.toLowerCase() === 'free';
+  return !event.price || isFreePrice(event.price);
 }
 
 /**

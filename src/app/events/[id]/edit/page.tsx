@@ -19,7 +19,10 @@ import {
   ArrowLeft,
   Repeat,
 } from 'lucide-react';
-import { categoryLabels, EventCategory, browseCategories } from '@/types/event';
+import { categoryLabels, EventCategory } from '@/types/event';
+import { eventCategoryOptions } from '@/constants/categories';
+import { useOrganizerVerification } from '@/hooks/useOrganizerVerification';
+import type { Event } from '@/types/event';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { DatePicker, VenueSelector } from '@/components';
@@ -42,6 +45,7 @@ const MAX_DESCRIPTION_LENGTH = 500;
 export default function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user, isAdmin, isLoading: authLoading } = useAuth();
+  const { isVerifiedOrganizer } = useOrganizerVerification();
   const { getEventById, venues, refreshEvents } = useEvents();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -64,7 +68,29 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     });
   };
 
-  const event = getEventById(id);
+  // Pending/rejected submissions aren't in the public events list, so fall back to the API.
+  const contextEvent = getEventById(id);
+  const [fetchedEvent, setFetchedEvent] = useState<Event | null>(null);
+  const [fetchingEvent, setFetchingEvent] = useState(false);
+  useEffect(() => {
+    if (contextEvent || fetchedEvent) return;
+    let cancelled = false;
+    setFetchingEvent(true);
+    fetch(`/api/events/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.event) setFetchedEvent(data.event);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setFetchingEvent(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, contextEvent, fetchedEvent]);
+  const event = contextEvent ?? fetchedEvent ?? undefined;
+  const isVerified = isVerifiedOrganizer;
   const isFoodDeal = event?.categories.includes('food-deal') ?? false;
   const entityLabel = isFoodDeal ? 'Food & Drink Special' : 'Event';
   const isRecurring = Boolean(event?.isRecurring && event?.seriesId);
@@ -75,6 +101,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [venueId, setVenueId] = useState('');
+  // Only Major Venues (listed on Coming up) can show a photo
+  const canAddPhoto = !!venues.find((v) => v.id === venueId)?.isMajor;
   const [newVenueName, setNewVenueName] = useState('');
   const [newVenueAddress, setNewVenueAddress] = useState('');
   const [categories, setCategories] = useState<EventCategory[]>([]);
@@ -231,9 +259,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     }
   };
 
-  if (authLoading) {
+  if (authLoading || (!event && fetchingEvent)) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <Loader2 size={32} className="animate-spin text-primary" />
       </div>
     );
@@ -241,11 +269,11 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   if (!event) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <h1 className="font-display text-3xl text-foreground mb-4">{entityLabel} Not Found</h1>
+          <h1 className="display-md mb-4">{entityLabel} Not Found</h1>
           <p className="text-muted-foreground mb-6">The item you&apos;re looking for doesn&apos;t exist.</p>
-          <Link href="/events" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg">
+          <Link href="/events" className="btn-sun">
             <ArrowLeft size={18} /> Back to Browse
           </Link>
         </div>
@@ -257,11 +285,11 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   if (!canEdit) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <h1 className="font-display text-3xl text-foreground mb-4">Access Denied</h1>
+          <h1 className="display-md mb-4">Access Denied</h1>
           <p className="text-muted-foreground mb-6">You don&apos;t have permission to edit this {entityLabel.toLowerCase()}.</p>
-          <Link href={`/events/${id}`} className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg">
+          <Link href={`/events/${id}`} className="btn-sun">
             <ArrowLeft size={18} /> Back
           </Link>
         </div>
@@ -271,21 +299,28 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   if (isSaved) {
     return (
-      <div className="min-h-screen flex items-center justify-center py-16">
+      <div className="flex min-h-[60vh] items-center justify-center py-16">
         <div className="text-center max-w-md mx-auto px-4">
-          <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-6">
-            <CheckCircle size={40} className="text-green-600" />
+          <div className="w-20 h-20 rounded-full bg-sun flex items-center justify-center mx-auto mb-6">
+            <CheckCircle size={40} className="text-navy" />
           </div>
-          <h1 className="font-display text-3xl text-foreground mb-4">{entityLabel} Updated!</h1>
+          <h1 className="display-md mb-4">{entityLabel} Updated!</h1>
           <p className="text-muted-foreground mb-8">
-            {editScope === 'future'
-              ? 'Your changes have been applied to this and all future occurrences.'
-              : 'Your changes have been saved successfully.'}
+            {isVerified
+              ? editScope === 'future'
+                ? 'Your changes are live for this and all future occurrences.'
+                : 'Your changes are live.'
+              : 'Thanks! Your changes have been sent for review. We review edits within 24 hours, and your listing will be republished once it’s approved.'}
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href={`/events/${id}`} className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium">
-              View {entityLabel}
+            <Link href="/my-events?tab=submitted" className="btn-sun">
+              Back to my submissions
             </Link>
+            {isVerified && (
+              <Link href={`/events/${id}`} className="btn-outline">
+                View {entityLabel}
+              </Link>
+            )}
             <button
               onClick={() => setIsSaved(false)}
               className="px-6 py-3 border border-border rounded-xl font-medium hover:bg-muted transition-colors"
@@ -308,20 +343,21 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   return (
     <div className="min-h-screen">
-      <section className="bg-gradient-to-br from-secondary to-primary/80 text-white py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
+      <section className="page-container pt-10">
+        <div>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="font-display text-4xl sm:text-5xl mb-4">Edit {entityLabel}</h1>
-              <p className="text-white/80 text-lg max-w-2xl">
+              <p className="eyebrow mb-3.5">— Edit</p>
+              <h1 className="display-section mb-4">Edit {entityLabel.toLowerCase()}</h1>
+              <p className="text-ink-muted text-[16px] max-w-2xl">
                 Update the details for &ldquo;{event.title}&rdquo;
               </p>
               {isRecurring && (
-                <p className="mt-2 flex items-center gap-2 text-white/70 text-sm">
+                <p className="mt-2 flex items-center gap-2 text-link text-sm">
                   <Repeat size={14} />
                   {recurrenceLabel}
                   {event.detachedFromSeries && (
-                    <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-500/30 text-amber-100 text-xs">
+                    <span className="ml-2 px-2 py-0.5 rounded-full bg-[#fff1d6] text-[#8a5a00] text-xs">
                       Modified (detached from series)
                     </span>
                   )}
@@ -330,7 +366,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             </div>
             <Link
               href={`/events/${id}`}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+              className="btn-outline self-start sm:self-auto"
             >
               &larr; Back
             </Link>
@@ -338,9 +374,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         </div>
       </section>
 
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-3xl mx-auto px-4 sm:px-8 py-10">
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
+          <div className="mb-6 p-4 bg-danger-tint rounded-[14px] flex items-center gap-3 text-danger">
             <AlertCircle size={20} />
             <p className="text-sm">{error}</p>
           </div>
@@ -355,13 +391,13 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* Edit scope for recurring */}
           {isRecurring && (
-            <section className="bg-card border border-border rounded-xl p-6">
+            <section className="card p-5 sm:p-7">
               <h3 className="font-display text-xl text-foreground mb-4 flex items-center gap-2">
                 <Repeat size={20} className="text-primary" />
                 Apply Changes To
               </h3>
               <div className="space-y-3">
-                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-muted/50">
+                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-[14px] border border-line hover:bg-sky-soft">
                   <input
                     type="radio"
                     name="editScope"
@@ -375,7 +411,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     <p className="text-xs text-muted-foreground">Only this date will be updated. It will be marked as modified.</p>
                   </div>
                 </label>
-                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-muted/50">
+                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-[14px] border border-line hover:bg-sky-soft">
                   <input
                     type="radio"
                     name="editScope"
@@ -419,14 +455,14 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           )}
 
           {/* Details */}
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
+          <section className="card p-5 sm:p-7">
+            <h3 className="mb-5 flex items-center gap-2 text-[20px] font-bold text-navy">
               <FileText size={20} className="text-primary" />
               {entityLabel} Details
             </h3>
             <div className="space-y-4">
               <div>
-                <label htmlFor="title" className="block text-sm font-medium text-foreground mb-2">
+                <label htmlFor="title" className="field-label">
                   {isFoodDeal ? 'Special Title' : 'Event Title'} *
                 </label>
                 <input
@@ -435,11 +471,11 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                  className="field"
                 />
               </div>
               <div>
-                <label htmlFor="description" className="block text-sm font-medium text-foreground mb-2">Description *</label>
+                <label htmlFor="description" className="field-label">Description *</label>
                 <textarea
                   id="description"
                   required
@@ -447,7 +483,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   maxLength={MAX_DESCRIPTION_LENGTH}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary resize-none"
+                  className="field"
                 />
                 <div className="flex justify-end mt-1">
                   <span className={`text-xs ${description.length > MAX_DESCRIPTION_LENGTH * 0.9 ? 'text-amber-500' : 'text-muted-foreground'}`}>
@@ -459,8 +495,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           </section>
 
           {/* Date & Time */}
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
+          <section className="card p-5 sm:p-7">
+            <h3 className="mb-5 flex items-center gap-2 text-[20px] font-bold text-navy">
               <Calendar size={20} className="text-primary" />
               Date & Time
             </h3>
@@ -482,35 +518,35 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <label htmlFor="date" className="block text-sm font-medium text-foreground mb-2">Date *</label>
+                <label htmlFor="date" className="field-label">Date *</label>
                 <DatePicker id="date" value={date} onChange={setDate} required placeholder="Select date" />
               </div>
               {!isAllDay && (
                 <>
                   <div>
-                    <label htmlFor="startTime" className="block text-sm font-medium text-foreground mb-2">Start Time *</label>
+                    <label htmlFor="startTime" className="field-label">Start Time *</label>
                     <div className="relative">
-                      <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
+                      <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-link pointer-events-none z-10" />
                       <input
                         type="time"
                         id="startTime"
                         required
                         value={startTime}
                         onChange={(e) => setStartTime(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                        className="field pl-10"
                       />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="endTime" className="block text-sm font-medium text-foreground mb-2">End Time</label>
+                    <label htmlFor="endTime" className="field-label">End Time</label>
                     <div className="relative">
-                      <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10" />
+                      <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-link pointer-events-none z-10" />
                       <input
                         type="time"
                         id="endTime"
                         value={endTime}
                         onChange={(e) => setEndTime(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                        className="field pl-10"
                       />
                     </div>
                   </div>
@@ -520,8 +556,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           </section>
 
           {/* Location */}
-          <section ref={registerFieldRef('venue')} className="bg-card border border-border rounded-xl p-6">
-            <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
+          <section ref={registerFieldRef('venue')} className="card p-5 sm:p-7">
+            <h3 className="mb-5 flex items-center gap-2 text-[20px] font-bold text-navy">
               <MapPin size={20} className="text-primary" />
               Location
             </h3>
@@ -540,22 +576,22 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
           {/* Categories — events only show browse categories; specials keep food/drink */}
           {!isFoodDeal && (
-            <section ref={registerFieldRef('categories')} className="bg-card border border-border rounded-xl p-6">
+            <section ref={registerFieldRef('categories')} className="card p-5 sm:p-7">
               <h3 className="font-display text-xl text-foreground mb-2 flex items-center gap-2">
                 <Tag size={20} className="text-primary" />
                 Categories *
               </h3>
               <p className="text-sm text-muted-foreground mb-4">Select all that apply</p>
               <div className="flex flex-wrap gap-2">
-                {browseCategories.map((category) => {
+                {eventCategoryOptions.map((category) => {
                   const isSelected = categories.includes(category);
                   return (
                     <button
                       key={category}
                       type="button"
                       onClick={() => handleCategoryToggle(category)}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                        isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-border'
+                      className={`chip ${
+                        isSelected ? '!bg-navy !border-navy !text-white font-bold' : ''
                       }`}
                     >
                       {categoryLabels[category]}
@@ -567,15 +603,15 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           )}
 
           {/* Price / Additional Info */}
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="font-display text-xl text-foreground mb-6 flex items-center gap-2">
+          <section className="card p-5 sm:p-7">
+            <h3 className="mb-5 flex items-center gap-2 text-[20px] font-bold text-navy">
               <DollarSign size={20} className="text-primary" />
               {isFoodDeal ? 'Price' : 'Additional Information'}
             </h3>
             <div className="space-y-4">
               {isFoodDeal ? (
                 <div>
-                  <label htmlFor="specialPrice" className="block text-sm font-medium text-foreground mb-2">
+                  <label htmlFor="specialPrice" className="field-label">
                     Special Price
                   </label>
                   <input
@@ -584,7 +620,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     value={specialPrice}
                     onChange={(e) => setSpecialPrice(e.target.value)}
                     placeholder="e.g., 5 Pints, Half-Price Wings, Free"
-                    className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                    className="field"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     Enter a number (e.g. 15) or free text (e.g. Free, Varies). Numbers get a $ when displayed.
@@ -615,13 +651,13 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                         value={priceAmount}
                         onChange={(e) => setPriceAmount(e.target.value)}
                         placeholder="e.g., 15, 20-40"
-                        className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                        className="field"
                       />
                     )}
                   </div>
 
                   <div>
-                    <label htmlFor="ticketUrl" className="block text-sm font-medium text-foreground mb-2">Ticket / Registration Link</label>
+                    <label htmlFor="ticketUrl" className="field-label">Ticket / Registration Link</label>
                     <div className="relative">
                       <LinkIcon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
                       <input
@@ -630,13 +666,14 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                         value={ticketUrl}
                         onChange={(e) => setTicketUrl(e.target.value)}
                         placeholder="e.g., ticketmaster.com/event/abc"
-                        className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                        className="field pl-10"
                       />
                     </div>
                   </div>
 
+                  {canAddPhoto && (
                   <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">Event Image</label>
+                    <label className="field-label">Event Image</label>
                     {imagePreview ? (
                       <div className="relative rounded-xl overflow-hidden">
                         <img src={imagePreview} alt="Event preview" className="w-full h-48 object-cover" />
@@ -675,15 +712,22 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                       className="hidden"
                     />
                   </div>
+                  )}
                 </>
               )}
             </div>
           </section>
 
+          {!isVerified && (
+            <p className="text-[13px] text-ink-muted">
+              Edits to your listing are reviewed by our team before they go live again.
+            </p>
+          )}
+
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-primary text-primary-foreground rounded-xl font-medium text-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="btn-sun h-12 w-full text-[15px]"
           >
             {isSubmitting ? (
               <>
@@ -693,7 +737,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             ) : (
               <>
                 <Save size={20} />
-                Save Changes
+                {isVerified ? 'Save & publish' : 'Save & resubmit for review'}
               </>
             )}
           </button>

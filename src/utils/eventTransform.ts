@@ -20,6 +20,10 @@ type VenueRel = {
   imageUrl?: string | null;
   coverImageUrl?: string | null;
   promotionTier?: string | null;
+  eventPromotionTier?: string | null;
+  specialPromotionTier?: string | null;
+  isMajor?: boolean | null;
+  isDowntownDistrict?: boolean | null;
   status?: string;
   [key: string]: unknown;
 };
@@ -42,6 +46,10 @@ export type EventWithRelations = {
   seriesId?: string | null;
   detachedFromSeries?: boolean;
   submittedById?: string | null;
+  lastEditedAt?: Date | null;
+  rejectionReason?: string | null;
+  hiddenFromPromotion?: boolean;
+  createdAt?: Date;
   venue: VenueRel;
   categories: CategoryRel[];
   series?: SeriesRel;
@@ -59,6 +67,11 @@ export function transformVenue(venue: VenueRel) {
     imageUrl: getAbsoluteImageUrl(venue.imageUrl ?? null) ?? undefined,
     coverImageUrl: getAbsoluteImageUrl(venue.coverImageUrl ?? null) ?? undefined,
     promotionTier: venue.promotionTier ?? undefined,
+    eventPromotionTier: venue.eventPromotionTier ?? venue.promotionTier ?? undefined,
+    specialPromotionTier: venue.specialPromotionTier ?? venue.promotionTier ?? undefined,
+    isMajor: venue.isMajor ?? false,
+    isDowntownDistrict: venue.isDowntownDistrict ?? false,
+    status: venue.status,
   };
 }
 
@@ -96,6 +109,10 @@ export function transformEvent(event: EventWithRelations, options?: { stripDataU
     recurrenceDay: series?.recurrenceDays?.[0] ?? undefined,
     recurrenceEndDate: series?.seriesEndDate ?? undefined,
     submittedById: event.submittedById || undefined,
+    lastEditedAt: event.lastEditedAt ? event.lastEditedAt.toISOString() : undefined,
+    rejectionReason: event.rejectionReason || undefined,
+    hiddenFromPromotion: event.hiddenFromPromotion ?? false,
+    createdAt: event.createdAt ? event.createdAt.toISOString() : undefined,
   };
 }
 
