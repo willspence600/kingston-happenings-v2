@@ -18,7 +18,9 @@ function LoginContent() {
   const { login, user, isLoading: authLoading } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  // The email confirmation callback sends people here with ?confirmed=1 or ?error=
+  const [error, setError] = useState(() => searchParams.get('error') || '');
+  const justConfirmed = searchParams.get('confirmed') === '1';
   const [formData, setFormData] = useState({ email: '', password: '', rememberMe: true });
 
   useEffect(() => {
@@ -90,6 +92,12 @@ function LoginContent() {
             Sign in to see your saved events and manage your submissions.
           </p>
 
+          {justConfirmed && !error && (
+            <div className="mt-6 flex items-start gap-3 rounded-[14px] bg-success-tint p-4 text-[14px] text-success">
+              <Check size={18} className="mt-0.5 shrink-0" />
+              <p>Your email is confirmed. Sign in to continue.</p>
+            </div>
+          )}
           {error && (
             <div className="mt-6 flex items-start gap-3 rounded-[14px] bg-danger-tint p-4 text-[14px] text-danger">
               <AlertCircle size={18} className="mt-0.5 shrink-0" />

@@ -31,36 +31,48 @@ import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Event, EventCategory } from '@/types/event';
 import { categoryLabels, categoryDotColors } from '@/constants/categories';
-import { formatPrice } from '@/utils/price';
+import { formatPrice, isFreePrice } from '@/utils/price';
 import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
-import { getPromotionTierPriority } from '@/utils/events';
-import { DKMark, SaveButton, formatTime, formatTimeShort, isAllDayEvent, isDowntown, primaryCategory } from '@/components/brand';
+import { listingPriority } from '@/lib/promotion';
+import { SaveButton, formatTime, formatTimeShort, isAllDayEvent, isDowntown, primaryCategory } from '@/components/brand';
 
 type TabType = 'all' | 'events' | 'deals';
 type DateWindow =
   | { kind: 'day'; date: string }
   | { kind: 'week' }
-  | { kind: 'any' }
+  | { kind: 'upcoming' }
   | { kind: 'range'; start: string; end: string };
 type PastRange = 'none' | 'week' | 'month' | '3months';
-type SpecialFilter = 'all' | 'food' | 'drink' | 'now' | 'happy';
-type SortMode = 'time' | 'popular' | 'free';
+type SpecialFilter = 'all' | 'food' | 'drink' | 'now' | 'happy' | 'downtown';
 
 const DOWNTOWN = 'downtown' as const;
 type RailFilter = EventCategory | typeof DOWNTOWN;
 
+function DowntownKingstonIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        fill="white"
+        d="M8.58538 7.07761C8.47788 7.12779 8.30873 7.28044 8.2095 7.41691C8.04587 7.64204 8.02714 7.72182 8.00747 8.27849C7.98755 8.84147 7.99908 8.91586 8.14748 9.18183C8.33191 9.51212 8.71693 9.74731 9.07332 9.74731C9.36969 9.74731 9.70171 9.99026 9.79537 10.2758C9.84617 10.4307 9.87123 11.1104 9.87368 12.3975L9.87718 14.2914L10.0268 14.4484C10.1091 14.5349 10.2768 14.6253 10.3995 14.6494C10.7793 14.7243 12.2263 14.6578 12.338 14.5605C12.3926 14.5128 12.9015 13.4918 13.469 12.2915C14.0363 11.0911 14.5899 9.98066 14.6991 9.8238C15.0184 9.3648 15.412 9.21294 16.3899 9.17124C17.3424 9.13073 17.6092 9.17367 17.8086 9.39953C17.9521 9.56204 17.9584 9.60907 17.9584 10.5096C17.9584 11.3971 17.9503 11.4599 17.8138 11.6265C17.6993 11.7663 17.5982 11.8099 17.3283 11.8358C17.1408 11.8538 16.9494 11.9005 16.9029 11.9395C16.8565 11.9785 16.438 12.8108 15.9729 13.7891C15.5068 14.7696 15.0402 15.6639 14.9332 15.7816L14.739 15.9954L14.9332 16.2091C15.0408 16.3276 15.5101 17.229 15.986 18.2315C16.4583 19.2263 16.8562 20.0531 16.8703 20.0689C16.8844 20.0846 17.071 20.1192 17.285 20.1457C17.5951 20.1841 17.7031 20.2292 17.8163 20.3673C17.9497 20.5302 17.9584 20.5985 17.9584 21.4818C17.9584 22.4087 17.956 22.4255 17.7948 22.5946C17.5779 22.8224 17.3423 22.8601 16.3899 22.8195C15.4133 22.7779 15.0199 22.6263 14.6969 22.167C14.5866 22.0101 14.0394 20.9051 13.4809 19.7114C12.9223 18.5176 12.4154 17.4976 12.3544 17.4445C12.2737 17.3743 12.024 17.3408 11.4382 17.3217C10.487 17.2906 10.2281 17.331 10.0268 17.5424L9.87718 17.6994L9.87368 19.5933C9.87123 20.8826 9.84624 21.5586 9.79537 21.7111C9.69407 22.0147 9.47694 22.1674 9.04093 22.2418C8.57172 22.322 8.31556 22.482 8.13677 22.8062C8.01048 23.0353 7.99582 23.1393 8.01148 23.6957C8.02739 24.2636 8.04581 24.3488 8.19791 24.5579C8.54434 25.0343 8.34162 25.0156 12.8694 24.9885C16.8029 24.9649 16.9436 24.9597 17.5512 24.8162C21.0337 23.9939 23.1123 21.8233 23.8569 18.2315C23.9837 17.6196 24 17.3614 24 15.9625C24 14.5748 23.9831 14.303 23.8605 13.714C23.4871 11.9204 22.8173 10.5686 21.7483 9.45135C20.6469 8.30013 19.3555 7.59942 17.5512 7.17422C16.9426 7.03078 16.8086 7.02598 12.8528 7.00651C9.48596 6.98987 8.74706 7.00224 8.58538 7.07761ZM20.616 20.3626C21.0534 20.6317 21.2904 21.2486 21.1568 21.7696C20.9305 22.652 19.8327 22.9979 19.1913 22.389C18.805 22.0222 18.7019 21.2941 18.9663 20.8002C19.2768 20.2203 20.051 20.0149 20.616 20.3626Z"
+      />
+    </svg>
+  );
+}
+
 const railCategories: { id: RailFilter; label: string; tile: string; icon: ReactNode }[] = [
-  { id: DOWNTOWN, label: 'Downtown Kingston', tile: 'bg-[#db3247]', icon: <DKMark size={20} /> },
-  { id: 'live-music', label: 'Live music', tile: 'bg-[#ff6b4a] text-white', icon: <Music size={17} /> },
-  { id: 'activity-nights', label: 'Activity nights', tile: 'bg-[#1b2a41] text-white', icon: <PartyPopper size={17} /> },
-  { id: 'concert', label: 'Concerts', tile: 'bg-[#3e8ed0] text-white', icon: <Ticket size={17} /> },
-  { id: 'daytime', label: 'Daytime events', tile: 'bg-[#ffb547] text-[#1b2a41]', icon: <Sun size={17} /> },
-  { id: 'sports', label: 'Sports', tile: 'bg-[#3e7ca6] text-white', icon: <Trophy size={17} /> },
-  { id: 'theatre', label: 'Theatre & Arts', tile: 'bg-[#ffe1da] text-[#b3412a]', icon: <Star size={17} /> },
-  { id: 'market', label: 'Markets', tile: 'bg-[#fff1d6] text-[#8a5a00]', icon: <Store size={17} /> },
-  { id: 'workshop', label: 'Workshops & classes', tile: 'bg-[#ddebf7] text-[#1f5f94]', icon: <Pencil size={17} /> },
-  { id: 'family', label: 'Family activities', tile: 'bg-[#ffe8d6] text-[#a84a12]', icon: <Users size={17} /> },
-  { id: '19plus', label: '19+', tile: 'bg-[#c4452b] text-white', icon: <Wine size={17} /> },
+  { id: DOWNTOWN, label: 'Downtown Kingston', tile: 'bg-[#ee364d]', icon: <DowntownKingstonIcon /> },
+  { id: 'live-music', label: categoryLabels['live-music'], tile: 'bg-[#ff6b4a] text-white', icon: <Music size={17} /> },
+  { id: 'activity-nights', label: categoryLabels['activity-nights'], tile: 'bg-[#1b2a41] text-white', icon: <PartyPopper size={17} /> },
+  { id: 'concert', label: categoryLabels.concert, tile: 'bg-[#3e8ed0] text-white', icon: <Ticket size={17} /> },
+  { id: 'daytime', label: categoryLabels.daytime, tile: 'bg-[#ffb547] text-[#1b2a41]', icon: <Sun size={17} /> },
+  { id: 'sports', label: categoryLabels.sports, tile: 'bg-[#3e7ca6] text-white', icon: <Trophy size={17} /> },
+  { id: 'theatre', label: categoryLabels.theatre, tile: 'bg-[#ffe1da] text-[#b3412a]', icon: <Star size={17} /> },
+  { id: 'market', label: categoryLabels.market, tile: 'bg-[#fff1d6] text-[#8a5a00]', icon: <Store size={17} /> },
+  { id: 'workshop', label: categoryLabels.workshop, tile: 'bg-[#ddebf7] text-[#1f5f94]', icon: <Pencil size={17} /> },
+  { id: 'family', label: categoryLabels.family, tile: 'bg-[#ffe8d6] text-[#a84a12]', icon: <Users size={17} /> },
+  { id: '19plus', label: categoryLabels['19plus'], tile: 'bg-[#c4452b] text-white', icon: <Wine size={17} /> },
 ];
 
 const popularCategories: { label: string; category?: EventCategory; tab?: TabType }[] = [
@@ -112,8 +124,12 @@ function isOnNow(event: Event) {
   return event.startTime <= now && now <= end;
 }
 
+function isHappyHour(event: Event) {
+  return event.categories.includes('happy-hour') || specialBand(event) === 'Happy hour';
+}
+
 function specialKind(event: Event): 'food' | 'drink' | 'happy' {
-  if (specialBand(event) === 'Happy hour') return 'happy';
+  if (isHappyHour(event)) return 'happy';
   if (event.categories.includes('drink') && !event.categories.includes('food')) return 'drink';
   return 'food';
 }
@@ -131,6 +147,13 @@ function groupBy<T>(items: T[], key: (item: T) => string, order?: string[]): [st
   return entries;
 }
 
+function happeningTitle(dateStr: string) {
+  const d = parseISO(dateStr);
+  if (isToday(d)) return 'Happening Today';
+  if (isTomorrow(d)) return 'Happening Tomorrow';
+  return `Happening ${format(d, 'EEEE')}`;
+}
+
 function dayLabel(dateStr: string) {
   const d = parseISO(dateStr);
   if (isToday(d)) return `Today · ${format(d, 'EEEE, MMMM d')}`;
@@ -141,7 +164,18 @@ function dayLabel(dateStr: string) {
 /* ---------------- small UI pieces ---------------- */
 
 function Band({ label }: { label: string }) {
-  return <p className="pt-7 pb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</p>;
+  return <p className="pt-7 pb-1.5 text-[12px] font-medium uppercase tracking-[0.16em] text-ink-subtle">{label}</p>;
+}
+
+function DayHeader({ date, className = '' }: { date: string; className?: string }) {
+  return (
+    <div className={`flex flex-col gap-[7px] ${className}`}>
+      <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-navy">
+        — {format(parseISO(date), 'EEEE, MMMM d')}
+      </p>
+      <h2 className="text-[22px] font-bold tracking-[-0.01em] text-navy">{happeningTitle(date)}</h2>
+    </div>
+  );
 }
 
 function CategoryDot({ category }: { category?: EventCategory }) {
@@ -164,7 +198,7 @@ function TextTabs<T extends string>({
           key={o.id}
           onClick={() => onChange(o.id)}
           className={`text-[13px] text-navy ${
-            value === o.id ? 'font-bold underline underline-offset-[6px] decoration-2' : 'text-ink-muted hover:text-navy'
+            value === o.id ? 'font-bold underline underline-offset-4' : 'text-ink-subtle hover:text-navy'
           }`}
         >
           {o.label}
@@ -186,7 +220,7 @@ function CompactEventRow({ event }: { event: Event }) {
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
-        <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink-muted">
+        <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink-subtle">
           <CategoryDot category={cat} />
           <span className="truncate">
             {cat ? categoryLabels[cat] : 'Event'} · {event.venue.name}
@@ -223,30 +257,29 @@ function DetailedEventRow({
     ? 'All ages'
     : '';
   return (
-    <div className="group relative flex items-start gap-5 border-b border-line py-4">
+    <div className="group relative flex items-start gap-4 border-b border-line py-[18px] sm:gap-6">
       <Link href={`/events/${event.id}`} className="absolute inset-0" aria-label={event.title} />
-      <span className="flex w-[72px] shrink-0 flex-col text-[13px] text-navy pointer-events-none">
-        <span className="font-medium">{isAllDayEvent(event) ? 'All day' : formatTime(event.startTime)}</span>
+      <span className="flex w-[72px] shrink-0 flex-col gap-0.5 text-navy pointer-events-none sm:w-[84px]">
+        <span className="text-[14px] font-medium">{isAllDayEvent(event) ? 'All day' : formatTime(event.startTime)}</span>
         {event.endTime && !isAllDayEvent(event) && (
-          <span className="text-ink-muted">– {formatTime(event.endTime)}</span>
+          <span className="text-[13px] text-ink-subtle">– {formatTime(event.endTime)}</span>
         )}
       </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-1 pointer-events-none">
+      <span className="flex min-w-0 flex-1 flex-col gap-[5px] pointer-events-none">
         <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
-        <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink-muted">
+        <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink-subtle">
           <CategoryDot category={cat} />
           <span className="truncate">
             {cat ? categoryLabels[cat] : 'Event'} · {event.venue.name}
-            {event.venue.neighborhood ? ` · ${event.venue.neighborhood}` : ''}
           </span>
         </span>
-        <span className="line-clamp-1 text-[13px] text-ink-muted">{event.description}</span>
+        <span className="truncate text-[14px] text-ink-muted">{event.description}</span>
       </span>
-      <span className="flex shrink-0 flex-col items-end text-right pointer-events-none">
-        <span className={`text-[14px] font-medium ${price === 'Free' ? 'text-link' : 'text-navy'}`}>{price}</span>
-        {sub && <span className="text-[12px] text-ink-muted">{sub}</span>}
+      <span className="flex shrink-0 flex-col items-end gap-1 text-right font-medium pointer-events-none sm:w-[130px]">
+        <span className={`text-[14px] ${price === 'Free' ? 'text-link' : 'text-navy'}`}>{price}</span>
+        {sub && <span className="text-[12px] text-ink-subtle">{sub}</span>}
       </span>
-      <SaveButton saved={saved} onClick={onSave} size={16} className="relative z-10 -mt-1" />
+      <SaveButton saved={saved} onClick={onSave} size={17} className="relative z-10" />
     </div>
   );
 }
@@ -262,42 +295,39 @@ function SpecialListRow({ event, saved, onSave }: { event: Event; saved: boolean
       })
     : format(parseISO(event.date), 'EEE, MMM d');
   return (
-    <div className="group relative flex items-start gap-5 border-b border-line py-4">
+    <div className="group relative flex items-start gap-4 border-b border-line py-[18px] sm:gap-6">
       <Link href={`/events/${event.id}`} className="absolute inset-0" aria-label={event.title} />
-      <span className="flex w-[72px] shrink-0 flex-col text-[13px] text-navy pointer-events-none">
+      <span className="flex w-[72px] shrink-0 flex-col gap-0.5 text-navy pointer-events-none sm:w-[84px]">
         {isAllDayEvent(event) ? (
-          <span className="font-medium">All day</span>
+          <span className="text-[14px] font-medium">All day</span>
         ) : (
           <>
-            <span className="font-medium">{formatTime(event.startTime)}</span>
-            <span className="text-ink-muted">– {event.endTime ? formatTime(event.endTime) : 'close'}</span>
+            <span className="text-[14px] font-medium">{formatTime(event.startTime)}</span>
+            <span className="text-[13px] text-ink-subtle">– {event.endTime ? formatTime(event.endTime) : 'close'}</span>
           </>
         )}
       </span>
       <span
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] pointer-events-none ${
-          kind === 'drink' ? 'bg-sky text-link-deep' : kind === 'happy' ? 'bg-[#fff1d6] text-[#8a5a00]' : 'bg-[#ffe8d6] text-[#a84a12]'
+        className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-[10px] pointer-events-none sm:flex ${
+          kind === 'drink' ? 'bg-[#e8f1f8] text-link' : kind === 'happy' ? 'bg-[#fff0be] text-[#8a5a00]' : 'bg-[#fff1e8] text-[#d9662b]'
         }`}
       >
-        {kind === 'drink' ? <Wine size={15} /> : kind === 'happy' ? <Smile size={15} /> : <Utensils size={15} />}
+        {kind === 'drink' ? <Wine size={17} /> : kind === 'happy' ? <Smile size={19} /> : <Utensils size={17} />}
       </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-1 pointer-events-none">
+      <span className="flex min-w-0 flex-1 flex-col gap-[5px] pointer-events-none">
         <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
-        <span className="truncate text-[13px] text-ink-muted">
-          {event.venue.name}
-          {event.venue.neighborhood ? ` · ${event.venue.neighborhood}` : ''}
-        </span>
-        <span className="line-clamp-1 text-[13px] text-ink-muted">{event.description}</span>
+        <span className="truncate text-[13px] text-ink-subtle">{event.venue.name}</span>
+        <span className="truncate text-[14px] text-ink-muted">{event.description}</span>
       </span>
-      <span className="flex shrink-0 flex-col items-end gap-1 text-right pointer-events-none">
+      <span className="flex shrink-0 flex-col items-end gap-1.5 text-right pointer-events-none sm:w-[130px]">
         {onNow && (
-          <span className="tag bg-success-tint text-success normal-case tracking-normal font-medium gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-success" /> On now
+          <span className="inline-flex items-center gap-[5px] rounded-full bg-[#e6f4ec] px-2 py-[3px] text-[12px] font-medium text-[#2d7b4d]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#2d7b4d]" /> On now
           </span>
         )}
-        <span className="text-[12px] text-ink-muted">{recurrence}</span>
+        <span className="text-[12px] font-medium text-ink-subtle">{recurrence}</span>
       </span>
-      <SaveButton saved={saved} onClick={onSave} size={16} className="relative z-10 -mt-1" />
+      <SaveButton saved={saved} onClick={onSave} size={17} className="relative z-10" />
     </div>
   );
 }
@@ -405,7 +435,7 @@ function EventsContent() {
   const tabParam = searchParams.get('tab');
   const initialTab: TabType = tabParam === 'deals' ? 'deals' : tabParam === 'events' ? 'events' : 'all';
 
-  const { events: allEvents, getUpcomingEvents, isLiked, toggleLike, getLikeCount, isLoading } = useEvents();
+  const { events: allEvents, getUpcomingEvents, isLiked, toggleLike, isLoading } = useEvents();
   const { user } = useAuth();
 
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -414,13 +444,12 @@ function EventsContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<RailFilter[]>(initialCategory ? [initialCategory] : []);
   const [dateWindow, setDateWindow] = useState<DateWindow>(
-    initialDate ? { kind: 'day', date: initialDate } : { kind: 'day', date: todayStr }
+    initialDate ? { kind: 'day', date: initialDate } : { kind: 'upcoming' }
   );
   const [pastRange, setPastRange] = useState<PastRange>('none');
   const [freeOnly, setFreeOnly] = useState(false);
   const [specialFilter, setSpecialFilter] = useState<SpecialFilter>('all');
   const [sideSpecialFilter, setSideSpecialFilter] = useState<SpecialFilter>('all');
-  const [sortMode, setSortMode] = useState<SortMode>('time');
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [showAllSpecials, setShowAllSpecials] = useState(false);
   const [showDateMenu, setShowDateMenu] = useState(false);
@@ -457,6 +486,8 @@ function EventsContent() {
     switch (dateWindow.kind) {
       case 'day':
         return event.date === dateWindow.date;
+      case 'upcoming':
+        return event.date === todayStr || event.date === format(addDays(new Date(), 1), 'yyyy-MM-dd');
       case 'week':
         return isWithinInterval(startOfDay(parseISO(event.date)), {
           start: startOfDay(new Date()),
@@ -467,42 +498,27 @@ function EventsContent() {
           start: startOfDay(parseISO(dateWindow.start)),
           end: startOfDay(parseISO(dateWindow.end)),
         });
-      default:
-        return true;
     }
   };
 
   const sortByTime = (a: Event, b: Event) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime);
 
   const filteredEvents = useMemo(() => {
-    const list = pool.filter((event) => {
+    return pool.filter((event) => {
       if (event.categories.includes('food-deal')) return false;
       if (!matchesQuery(event, searchQuery)) return false;
       if (!inWindow(event)) return false;
       if (selected.length > 0) {
         const hit = selected.some((s) =>
-          s === DOWNTOWN ? isDowntown(event.venue?.neighborhood) : event.categories.includes(s)
+          s === DOWNTOWN ? isDowntown(event.venue) : event.categories.includes(s)
         );
         if (!hit) return false;
       }
-      if (freeOnly && formatPrice(event.price) && event.price?.toLowerCase() !== 'free') return false;
+      if (freeOnly && formatPrice(event.price) && !isFreePrice(event.price)) return false;
       return true;
-    });
-    if (sortMode === 'popular') {
-      return list.sort(
-        (a, b) =>
-          (b.likeCount ?? getLikeCount(b.id)) - (a.likeCount ?? getLikeCount(a.id)) ||
-          getPromotionTierPriority(b.venue?.promotionTier) - getPromotionTierPriority(a.venue?.promotionTier) ||
-          sortByTime(a, b)
-      );
-    }
-    if (sortMode === 'free') {
-      const isFree = (e: Event) => (!e.price || e.price.toLowerCase() === 'free' ? 0 : 1);
-      return list.sort((a, b) => isFree(a) - isFree(b) || sortByTime(a, b));
-    }
-    return list.sort(sortByTime);
+    }).sort(sortByTime);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pool, searchQuery, dateWindow, selected, freeOnly, sortMode]);
+  }, [pool, searchQuery, dateWindow, selected, freeOnly]);
 
   const filteredDeals = useMemo(() => {
     return pool
@@ -516,7 +532,7 @@ function EventsContent() {
         (a, b) =>
           a.date.localeCompare(b.date) ||
           a.startTime.localeCompare(b.startTime) ||
-          getPromotionTierPriority(b.venue?.promotionTier) - getPromotionTierPriority(a.venue?.promotionTier)
+          listingPriority(b) - listingPriority(a)
       );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pool, searchQuery, dateWindow]);
@@ -530,7 +546,9 @@ function EventsContent() {
       case 'now':
         return list.filter(isOnNow);
       case 'happy':
-        return list.filter((e) => specialBand(e) === 'Happy hour');
+        return list.filter(isHappyHour);
+      case 'downtown':
+        return list.filter((e) => isDowntown(e.venue));
       default:
         return list;
     }
@@ -555,7 +573,7 @@ function EventsContent() {
     setFreeOnly(false);
     setPastRange('none');
     setSpecialFilter('all');
-    setDateWindow({ kind: 'day', date: todayStr });
+    setDateWindow({ kind: 'upcoming' });
   };
 
   const singleDay = dateWindow.kind === 'day';
@@ -570,19 +588,23 @@ function EventsContent() {
       ? 'this week'
       : dateWindow.kind === 'range'
       ? `${format(parseISO(dateWindow.start), 'MMM d')} – ${format(parseISO(dateWindow.end), 'MMM d')}`
-      : 'coming up';
+      : 'today or tomorrow';
 
-  const stripDays = [0, 1, 2, 3].map((offset) => format(addDays(new Date(), offset), 'yyyy-MM-dd'));
-
-  // The strip shows quick picks; the dropdown label only reflects custom dates/ranges
+  // The dropdown label only reflects custom dates/ranges
   const dateMenuLabel =
     dateWindow.kind === 'range'
       ? `${format(parseISO(dateWindow.start), 'MMM d')} – ${format(parseISO(dateWindow.end), 'MMM d')}`
-      : dateWindow.kind === 'day' && !stripDays.includes(dateWindow.date)
+      : dateWindow.kind === 'day'
       ? format(parseISO(dateWindow.date), 'EEE, MMM d')
-      : 'Any date';
-  const stripLabel = (dateStr: string, i: number) =>
-    i === 0 ? `Today · ${format(parseISO(dateStr), 'EEE d')}` : i === 1 ? 'Tomorrow' : format(parseISO(dateStr), 'EEE');
+      : dateWindow.kind === 'week'
+      ? 'This week'
+      : 'Pick a date';
+
+  const specialsTitle = singleDay
+    ? `${format(parseISO(dateWindow.date), 'EEEE')} Specials`
+    : dateWindow.kind === 'upcoming'
+    ? 'Upcoming Specials'
+    : `Specials ${windowNoun}`;
 
   const moreFilters = (
     <div className="flex flex-col gap-4">
@@ -622,22 +644,18 @@ function EventsContent() {
   const EVENTS_PREVIEW = 14;
   const SPECIALS_PREVIEW = 8;
 
-  const renderEventGroups = (list: Event[], row: (e: Event) => ReactNode) => {
-    if (singleDay) {
-      return groupBy(list, bandFor, BAND_ORDER).map(([band, items]) => (
-        <div key={band}>
-          <Band label={band} />
-          <div className="border-t border-line">{items.map(row)}</div>
-        </div>
-      ));
-    }
-    return groupBy(list, (e) => e.date).map(([date, items]) => (
-      <div key={date}>
-        <Band label={dayLabel(date)} />
-        <div className="border-t border-line">{items.map(row)}</div>
+  const renderEventGroups = (list: Event[], row: (e: Event) => ReactNode) =>
+    groupBy(list, (e) => e.date).map(([date, dayItems], i) => (
+      <div key={date} className={i > 0 ? 'mt-12' : ''}>
+        <DayHeader date={date} />
+        {groupBy(dayItems, bandFor, BAND_ORDER).map(([band, items]) => (
+          <div key={band}>
+            <Band label={band} />
+            <div className="border-t border-line">{items.map(row)}</div>
+          </div>
+        ))}
       </div>
     ));
-  };
 
   const emptyState = (
     <div className="rounded-[22px] bg-sky-soft px-6 py-14 text-center">
@@ -691,59 +709,46 @@ function EventsContent() {
     <>
       {/* Toolbar */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="segmented self-start">
+        <div className="inline-flex items-center gap-1 self-start rounded-full bg-[#fff3de] p-1">
           {(
             [
               ['all', 'All'],
               ['events', 'Events'],
-              ['deals', 'Food & Drink'],
+              ['deals', 'Specials'],
             ] as [TabType, string][]
           ).map(([id, label]) => (
-            <button key={id} className="segmented-item h-10 px-5" data-active={activeTab === id} onClick={() => setActiveTab(id)}>
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`inline-flex h-10 items-center rounded-full px-5 text-[14px] uppercase transition-colors ${
+                activeTab === id ? 'bg-sun font-bold text-black' : 'font-medium text-navy hover:bg-sun/30'
+              }`}
+            >
               {label}
             </button>
           ))}
         </div>
-        <div className="flex flex-col gap-2.5 sm:flex-row">
-          <div className="relative sm:w-[340px]">
-            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-navy" />
-            <input
-              type="text"
-              placeholder={activeTab === 'deals' ? 'Search specials...' : 'Search events...'}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-[46px] w-full rounded-full border border-line bg-white pl-11 pr-10 text-[15px] text-navy placeholder:text-ink-muted outline-none focus:border-navy"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-ink-muted hover:text-navy"
-                aria-label="Clear search"
-              >
-                <X size={16} />
-              </button>
-            )}
-          </div>
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
           <div className="relative" ref={dateMenuRef}>
             <button
               onClick={() => setShowDateMenu(!showDateMenu)}
-              className="flex h-[46px] w-full items-center justify-center gap-2 rounded-full border border-line bg-white px-5 text-[14px] font-medium text-navy hover:border-navy"
+              className="flex h-[46px] w-full items-center justify-center gap-2 whitespace-nowrap rounded-full border border-line bg-white px-[18px] text-[14px] font-medium text-navy hover:border-navy"
             >
               <Calendar size={18} className="text-link" />
               {dateMenuLabel}
               <ChevronDown size={16} />
             </button>
             {showDateMenu && (
-              <div className="absolute right-0 top-full z-40 mt-2 w-[300px] rounded-[18px] border border-line bg-white p-4 shadow-[0_18px_40px_-12px_rgba(27,42,65,0.25)]">
+              <div className="absolute left-0 top-full z-40 mt-2 w-[300px] rounded-[18px] border border-line bg-white p-4 shadow-[0_18px_40px_-12px_rgba(27,42,65,0.25)] sm:left-auto sm:right-0">
                 <button
                   onClick={() => {
-                    setDateWindow({ kind: 'any' });
+                    setDateWindow({ kind: 'upcoming' });
                     setShowDateMenu(false);
                   }}
                   className="chip mb-3 w-full justify-center"
-                  data-active={dateWindow.kind === 'any'}
+                  data-active={dateWindow.kind === 'upcoming'}
                 >
-                  Any upcoming date
+                  Upcoming dates
                 </button>
                 <div className="segmented mb-3 w-full">
                   <button className="segmented-item flex-1 justify-center" data-active={pickMode === 'single'} onClick={() => setPickMode('single')}>
@@ -775,10 +780,29 @@ function EventsContent() {
               </div>
             )}
           </div>
+          <div className="relative sm:w-[200px]">
+            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-navy" />
+            <input
+              type="text"
+              placeholder="Search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-[46px] w-full rounded-full border border-line bg-white pl-11 pr-10 text-[16px] text-navy placeholder:text-ink-muted outline-none focus:border-navy"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-ink-muted hover:text-navy"
+                aria-label="Clear search"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="h-[18px]" />
+      <div className="h-[46px]" />
 
       <div className={`flex flex-col gap-6 lg:flex-row ${activeTab === 'deals' ? '' : 'lg:gap-12'}`}>
         {activeTab !== 'deals' && (
@@ -786,49 +810,15 @@ function EventsContent() {
         )}
 
         <div className="min-w-0 flex-1">
-          {/* Date strip */}
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-            {stripDays.map((d, i) => (
-              <button
-                key={d}
-                className="chip h-10"
-                data-active={dateWindow.kind === 'day' && dateWindow.date === d}
-                onClick={() => setDateWindow({ kind: 'day', date: d })}
-              >
-                {stripLabel(d, i)}
-              </button>
-            ))}
-            <button className="chip h-10" data-active={dateWindow.kind === 'week'} onClick={() => setDateWindow({ kind: 'week' })}>
-              This week
-            </button>
-            <button
-              className="chip h-10"
-              data-active={dateWindow.kind === 'range' || (dateWindow.kind === 'day' && !stripDays.includes(dateWindow.date))}
-              onClick={() => {
-                setPickMode('single');
-                setShowDateMenu(true);
-              }}
-            >
-              <Calendar size={14} className="text-link" />
-              Pick a date
-            </button>
-          </div>
-
-          <div className="mt-7">
+          <div>
             {noResults ? (
               emptyState
             ) : activeTab === 'all' ? (
               <div className="flex flex-col gap-10 xl:flex-row xl:gap-14">
                 {/* Events column */}
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between">
-                    <h2 className="text-[24px] font-bold text-navy">Events {windowNoun}</h2>
-                    <span className="text-[13px] text-ink-muted">
-                      {filteredEvents.length} event{filteredEvents.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
                   {filteredEvents.length === 0 ? (
-                    <p className="mt-6 text-ink-muted">No events {windowNoun} with these filters.</p>
+                    <p className="text-ink-muted">No events {windowNoun} with these filters.</p>
                   ) : (
                     renderEventGroups(
                       showAllEvents ? filteredEvents : filteredEvents.slice(0, EVENTS_PREVIEW),
@@ -843,11 +833,8 @@ function EventsContent() {
                 </div>
 
                 {/* Specials side panel */}
-                <div className="self-start rounded-[22px] bg-sky-soft p-7 xl:w-[360px] xl:shrink-0">
-                  <div className="flex items-baseline justify-between">
-                    <h2 className="text-[24px] font-bold text-navy">Specials {singleDay ? windowNoun : ''}</h2>
-                    <span className="text-[13px] text-ink-muted">{applySpecialFilter(filteredDeals, sideSpecialFilter).length}</span>
-                  </div>
+                <div className="self-start rounded-[25px] bg-[#f3f8fc] p-7 xl:w-[360px] xl:shrink-0">
+                  <h2 className="pb-2 text-[22px] font-bold tracking-[-0.01em] text-navy">{specialsTitle}</h2>
                   <TextTabs
                     value={sideSpecialFilter}
                     onChange={setSideSpecialFilter}
@@ -856,6 +843,7 @@ function EventsContent() {
                       { id: 'food', label: 'Food' },
                       { id: 'drink', label: 'Drinks' },
                       { id: 'now', label: 'On now' },
+                      { id: 'downtown', label: 'Downtown' },
                     ]}
                   />
                   {(() => {
@@ -867,10 +855,10 @@ function EventsContent() {
                           <Link
                             key={deal.id}
                             href={`/events/${deal.id}`}
-                            className="group block border-b border-line py-3.5 last:border-b-0"
+                            className="group block border-b border-[#dce7f1] py-3.5 last:border-b-0"
                           >
                             <p className="text-[15px] font-bold text-navy group-hover:underline">{deal.title}</p>
-                            <p className="mt-1 text-[13px] text-ink-muted">
+                            <p className="mt-1 text-[13px] text-ink-subtle">
                               {deal.venue.name} ·{' '}
                               {isAllDayEvent(deal)
                                 ? 'All day'
@@ -891,32 +879,9 @@ function EventsContent() {
               </div>
             ) : activeTab === 'events' ? (
               <div>
-                <div className="flex items-baseline justify-between">
-                  <h2 className="text-[24px] font-bold text-navy">Events {windowNoun}</h2>
-                  <span className="text-[13px] text-ink-muted">
-                    {filteredEvents.length} event{filteredEvents.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <TextTabs
-                  value={sortMode}
-                  onChange={setSortMode}
-                  options={[
-                    { id: 'time', label: 'Time' },
-                    { id: 'popular', label: 'Popular' },
-                    { id: 'free', label: 'Free first' },
-                  ]}
-                />
-                {(() => {
-                  const list = showAllEvents ? filteredEvents : filteredEvents.slice(0, EVENTS_PREVIEW);
-                  const row = (e: Event) => (
-                    <DetailedEventRow key={e.id} event={e} saved={isLiked(e.id)} onSave={() => handleSave(e.id)} />
-                  );
-                  return sortMode === 'time' ? (
-                    renderEventGroups(list, row)
-                  ) : (
-                    <div className="mt-4 border-t border-line">{list.map(row)}</div>
-                  );
-                })()}
+                {renderEventGroups(showAllEvents ? filteredEvents : filteredEvents.slice(0, EVENTS_PREVIEW), (e) => (
+                  <DetailedEventRow key={e.id} event={e} saved={isLiked(e.id)} onSave={() => handleSave(e.id)} />
+                ))}
                 {filteredEvents.length > EVENTS_PREVIEW && !showAllEvents && (
                   <button onClick={() => setShowAllEvents(true)} className="link-arrow mt-5">
                     Show all {filteredEvents.length} →
@@ -924,7 +889,7 @@ function EventsContent() {
                 )}
               </div>
             ) : (
-              <div className="rounded-[22px] bg-sky-soft p-5 sm:p-8">
+              <div className="rounded-[25px] bg-[#f3f8fc] p-5 sm:p-[30px]">
                 {(() => {
                   const list = applySpecialFilter(filteredDeals, specialFilter);
                   const shown = showAllSpecials ? list : list.slice(0, 10);
@@ -933,12 +898,7 @@ function EventsContent() {
                   );
                   return (
                     <>
-                      <div className="flex items-baseline justify-between">
-                        <h2 className="text-[24px] font-bold text-navy">Food &amp; drink specials {windowNoun}</h2>
-                        <span className="text-[13px] text-ink-muted">
-                          {list.length} special{list.length === 1 ? '' : 's'}
-                        </span>
-                      </div>
+                      <h2 className="pb-1 text-[22px] font-bold tracking-[-0.01em] text-navy">{specialsTitle}</h2>
                       <TextTabs
                         value={specialFilter}
                         onChange={setSpecialFilter}
@@ -999,8 +959,8 @@ export default function EventsPage() {
         <br />
         happening
       </h1>
-      <p className="mt-2.5 text-[14px] text-ink-muted">feeling spontaneous or planning your week?</p>
-      <div className="h-10" />
+      <p className="mt-2.5 text-[14px] font-medium text-ink-muted">Feeling spontaneous or planning your week?</p>
+      <div className="h-[54px]" />
       <Suspense fallback={<EventsLoading />}>
         <EventsContent />
       </Suspense>

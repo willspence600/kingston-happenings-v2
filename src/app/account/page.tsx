@@ -4,8 +4,11 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { format, parseISO } from 'date-fns';
-import { User, Mail, Trash2, Loader2, LogOut, Store, Shield, CheckCircle, AlertTriangle } from 'lucide-react';
+import { User, Mail, Trash2, Loader2, LogOut, Store, Shield, CheckCircle, AlertTriangle, FileText, ShieldCheck, Clock } from 'lucide-react';
+import type { EmailOption } from '@/lib/siteContent';
 import { useAuth } from '@/contexts/AuthContext';
+import { useEvents } from '@/contexts/EventsContext';
+import { useOrganizerVerification } from '@/hooks/useOrganizerVerification';
 import { Modal } from '@/components';
 
 const roleLabels = { user: 'Event-goer', organizer: 'Organizer', admin: 'Admin' } as const;
@@ -18,6 +21,66 @@ export default function AccountPage() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const { venues } = useEvents();
+  const { organizerApproved, organizerVenueIds, isVerifiedOrganizer, verificationRequestedAt, isLoading: verificationLoading } = useOrganizerVerification();
+  const [emailOptions, setEmailOptions] = useState<EmailOption[]>([]);
+  const [emailPrefs, setEmailPrefs] = useState<Record<string, boolean> | null>(null);
+  const [agreedToTermsAt, setAgreedToTermsAt] = useState<string | null>(null);
+  const [savingPref, setSavingPref] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    fetch('/api/user/email-preferences')
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then((data) => {
+        if (!data?.preferences) return;
+        setEmailOptions(data.options || []);
+        setEmailPrefs(data.preferences);
+        setAgreedToTermsAt(data.agreedToTermsAt || null);
+      });
+  }, [user]);
+
+  const updateEmailPref = async (key: string, value: boolean) => {
+    if (!emailPrefs) return;
+    const previous = emailPrefs;
+    setEmailPrefs({ ...emailPrefs, [key]: value });
+    setSavingPref(key);
+    try {
+      const res = await fetch('/api/user/email-preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setEmailPrefs(previous);
+      setMessage({ type: 'error', text: 'Could not update your email preferences. Please try again.' });
+    } finally {
+      setSavingPref(null);
+    }
+  };
+
+  const setAllEmailPrefs = async (value: boolean) => {
+    if (!emailPrefs) return;
+    const previous = emailPrefs;
+    const next = Object.fromEntries(emailOptions.map((o) => [o.key, value]));
+    setEmailPrefs({ ...emailPrefs, ...next });
+    setSavingPref('all');
+    try {
+      const res = await fetch('/api/user/email-preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setEmailPrefs(previous);
+      setMessage({ type: 'error', text: 'Could not update your email preferences. Please try again.' });
+    } finally {
+      setSavingPref(null);
+    }
+  };
 
   useEffect(() => {
     if (!authLoading && !user) router.push('/login?redirect=/account');
@@ -34,6 +97,8 @@ export default function AccountPage() {
       </div>
     );
   }
+
+  const linkedVenues = venues.filter((v) => organizerVenueIds.includes(v.id));
 
   const initials = user.name
     .split(' ')
@@ -126,6 +191,35 @@ export default function AccountPage() {
         </div>
       )}
 
+      {user.role === 'organizer' && !verificationLoading && !isVerifiedOrganizer && (
+        <div className="mt-8 flex flex-col gap-4 rounded-[22px] bg-sun p-5 text-navy sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <div className="flex items-start gap-3">
+            {verificationRequestedAt ? <Clock size={20} className="mt-0.5 shrink-0" /> : <ShieldCheck size={20} className="mt-0.5 shrink-0" />}
+            <div>
+              <p className="text-[17px] font-bold">
+                {!organizerApproved
+                  ? 'Your organizer account is in review'
+                  : verificationRequestedAt
+                  ? 'Your Verified Organizer request is with our team'
+                  : 'Skip the review queue — get verified'}
+              </p>
+              <p className="mt-1 text-[13px] leading-[1.5]">
+                {!organizerApproved
+                  ? 'Once it’s approved, you can request to be a Verified Organizer.'
+                  : verificationRequestedAt
+                  ? `Requested ${format(new Date(verificationRequestedAt), 'MMM d, yyyy')}. Make sure you’ve sent us the confirmation email.`
+                  : 'Verified Organizers’ events and specials go live right away, without admin review.'}
+              </p>
+            </div>
+          </div>
+          {organizerApproved && (
+            <Link href="/organizer-verification" className="btn-navy shrink-0">
+              {verificationRequestedAt ? 'View request' : 'Request to be a Verified Organizer'}
+            </Link>
+          )}
+        </div>
+      )}
+
       <div className="mt-10 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_440px] lg:items-start">
         <div className="flex flex-col gap-4">
           <form onSubmit={handleSave} className="card p-6 sm:p-7">
@@ -175,6 +269,67 @@ export default function AccountPage() {
             </div>
           </form>
 
+          <div className="card p-6 sm:p-7">
+            <p className="eyebrow-sm">Email preferences</p>
+            {emailPrefs ? (
+              <div className="mt-5 flex flex-col">
+                {emailOptions.length === 0 && <p className="text-[13px] text-ink-muted">There are no optional emails right now.</p>}
+                {emailOptions.map(({ key, label, description: hint }) => (
+                  <div key={key} className="flex items-center justify-between gap-4 border-b border-line py-4 first:pt-0 last:border-b-0">
+                    <div>
+                      <p className="text-[15px] font-bold text-navy">{label}</p>
+                      <p className="mt-0.5 text-[13px] text-ink-muted">{hint}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="switch shrink-0"
+                      data-on={emailPrefs[key]}
+                      disabled={savingPref === key}
+                      onClick={() => updateEmailPref(key, !emailPrefs[key])}
+                      aria-label={`${emailPrefs[key] ? 'Turn off' : 'Turn on'} ${label}`}
+                    >
+                      <span />
+                    </button>
+                  </div>
+                ))}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {emailOptions.length > 0 && (
+                    <>
+                      <button type="button" className="btn-ghost btn-sm" disabled={!!savingPref} onClick={() => setAllEmailPrefs(true)}>
+                        Opt in to all
+                      </button>
+                      <button type="button" className="btn-ghost btn-sm" disabled={!!savingPref} onClick={() => setAllEmailPrefs(false)}>
+                        Unsubscribe from all
+                      </button>
+                    </>
+                  )}
+                </div>
+                <p className="mt-3 text-[12px] text-ink-muted">Account and security emails, like password resets, are always sent.</p>
+              </div>
+            ) : (
+              <div className="flex justify-center py-6">
+                <Loader2 size={20} className="animate-spin text-navy" />
+              </div>
+            )}
+          </div>
+
+          <div className="card p-6 sm:p-7">
+            <p className="eyebrow-sm">Terms &amp; privacy</p>
+            <p className="mt-3 text-[14px] text-navy">
+              {agreedToTermsAt
+                ? `You agreed to the Terms of Service and Privacy Policy on ${format(new Date(agreedToTermsAt), 'MMMM d, yyyy')}.`
+                : 'You agreed to these when you created your account.'}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/terms" className="btn-outline btn-sm">
+                <FileText size={14} /> Terms of Service
+              </Link>
+              <Link href="/privacy" className="btn-outline btn-sm">
+                <ShieldCheck size={14} /> Privacy Policy
+              </Link>
+            </div>
+          </div>
+
           <div className="rounded-[22px] bg-danger-tint p-6 sm:p-7">
             <p className="eyebrow-bold text-navy">Danger zone</p>
             <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -204,11 +359,43 @@ export default function AccountPage() {
               {roleLabels[user.role]}
             </span>
           </div>
-          {user.venueName && (
+          {user.role === 'organizer' && (
             <div className="flex items-center justify-between border-b border-white/15 py-4">
-              <span className="text-[15px] text-on-dark-muted">Venue</span>
-              <span className="text-[14px] font-bold">{user.venueName}</span>
+              <span className="text-[15px] text-on-dark-muted">Status</span>
+              {isVerifiedOrganizer ? (
+                <span className="tag gap-1 bg-sun text-navy">
+                  <ShieldCheck size={12} /> Verified Organizer
+                </span>
+              ) : (
+                <span className="text-[14px] font-bold">
+                  {!organizerApproved ? 'In review' : verificationRequestedAt ? 'Verification requested' : 'Approved · Unverified'}
+                </span>
+              )}
             </div>
+          )}
+          {user.role === 'organizer' && linkedVenues.length > 0 ? (
+            <div className="flex items-start justify-between gap-4 border-b border-white/15 py-4">
+              <span className="text-[15px] text-on-dark-muted">{linkedVenues.length === 1 ? 'Venue' : 'Venues'}</span>
+              <span className="flex flex-col items-end gap-1 text-right">
+                {linkedVenues.map((v) => (
+                  <Link key={v.id} href={`/venues/${v.id}`} className="text-[14px] font-bold hover:underline">
+                    {v.name}
+                  </Link>
+                ))}
+                {organizerApproved && (
+                  <Link href="/my-venue#add-venue" className="text-[12px] font-medium text-sun hover:underline">
+                    + Add another venue
+                  </Link>
+                )}
+              </span>
+            </div>
+          ) : (
+            user.venueName && (
+              <div className="flex items-center justify-between border-b border-white/15 py-4">
+                <span className="text-[15px] text-on-dark-muted">Venue</span>
+                <span className="text-[14px] font-bold">{user.venueName}</span>
+              </div>
+            )
           )}
           {user.role === 'user' ? (
             <>
@@ -225,10 +412,18 @@ export default function AccountPage() {
           ) : (
             <>
               <p className="mt-5 text-[20px] font-bold">
-                {user.role === 'admin' ? 'You have admin access' : 'You can post events & specials'}
+                {user.role === 'admin'
+                  ? 'You have admin access'
+                  : isVerifiedOrganizer
+                  ? 'You can auto-publish events & specials'
+                  : 'You can post events & specials'}
               </p>
               <p className="mt-2 text-[13px] leading-[1.5] text-on-dark-muted">
-                Track everything you&rsquo;ve submitted from My Events.
+                {user.role === 'organizer' && isVerifiedOrganizer
+                  ? 'As a Verified Organizer, your events and specials go live as soon as you submit them — no admin review. Track them from My Events.'
+                  : user.role === 'organizer'
+                  ? 'Your events and specials are reviewed by our team before they go live. Track everything you’ve submitted from My Events.'
+                  : 'Track everything you’ve submitted from My Events.'}
               </p>
               <div className="mt-5 flex flex-col gap-2.5">
                 <Link href="/submit" className="btn-sun w-full">

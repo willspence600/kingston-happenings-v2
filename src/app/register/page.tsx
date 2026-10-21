@@ -20,6 +20,7 @@ import {
   Circle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSignupEmailOptions } from '@/hooks/useEmailOptions';
 import { Rings } from '@/components/brand';
 
 function FeatureTile({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
@@ -82,6 +83,7 @@ export default function RegisterPage() {
   const [resendingEmail, setResendingEmail] = useState(false);
   const [emailResent, setEmailResent] = useState(false);
   const [formData, setFormData] = useState({ name: '', email: '', password: '', agreeToTerms: false });
+  const { options: emailOptions, prefs: emailPrefs, setPref: setEmailPref } = useSignupEmailOptions('user');
 
   useEffect(() => {
     if (user) router.push('/');
@@ -119,6 +121,7 @@ export default function RegisterPage() {
       email: formData.email,
       password: formData.password,
       role: 'user',
+      emailPreferences: emailPrefs,
     });
     if (result.success) {
       if (result.needsVerification) {
@@ -339,6 +342,22 @@ export default function RegisterPage() {
                       </Link>
                     </span>
                   </label>
+                  {emailOptions.map((o) => (
+                    <label key={o.key} className="flex cursor-pointer items-center gap-2.5 text-[13px] text-navy">
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={!!emailPrefs[o.key]}
+                        onClick={() => setEmailPref(o.key, !emailPrefs[o.key])}
+                        className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border-[1.5px] ${
+                          emailPrefs[o.key] ? 'border-navy bg-navy text-white' : 'border-line bg-white'
+                        }`}
+                      >
+                        {emailPrefs[o.key] && <Check size={12} strokeWidth={3} />}
+                      </button>
+                      <span>Email me: {o.label}</span>
+                    </label>
+                  ))}
                 </>
               )}
 

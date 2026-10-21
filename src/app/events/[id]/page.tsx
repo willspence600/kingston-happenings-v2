@@ -26,7 +26,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Event } from '@/types/event';
 import { Toast } from '@/components';
 import SmartImage from '@/components/ui/SmartImage';
-import { formatPrice } from '@/utils/price';
+import { formatPrice, isFreePrice } from '@/utils/price';
+import { isListingDetailCategory, specialConditionCategories } from '@/constants/categories';
 import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
 import {
   CategoryTag,
@@ -175,13 +176,23 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const dateShort = format(parseISO(event.date), 'EEEE, MMMM d');
   const isToday = event.date === format(new Date(), 'yyyy-MM-dd');
   const displayPrice = formatPrice(event.price);
-  const isFree = !displayPrice || displayPrice.toLowerCase() === 'free';
+  const isFree = !displayPrice || isFreePrice(displayPrice);
+  const isSoldOut = event.categories.includes('sold-out');
+  const needsRsvp = event.categories.includes('rsvp');
+  const isPayWhatYouCan = displayPrice.toLowerCase() === 'pay what you can';
+  const isHappyHour = event.categories.includes('happy-hour');
+  const hasFood = event.categories.includes('food');
+  const hasDrink = event.categories.includes('drink');
+  const specialType = isHappyHour ? 'Happy Hour' : hasFood && hasDrink ? 'Food & drinks' : hasDrink ? 'Drinks' : 'Food';
+  const conditions = specialConditionCategories.filter((c) => event.categories.includes(c));
   const recurrence = recurrenceOf(event);
   const liked = isLiked(event.id);
   const likeCount = getLikeCount(event.id);
   const displayImage = event.imageUrl;
   const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(`${event.venue.name}, ${event.venue.address}`)}`;
-  const tags = event.categories.filter((c) => c !== 'food-deal' && !(isFoodDeal && (c === 'food' || c === 'drink')));
+  const tags = event.categories.filter(
+    (c) => c !== 'food-deal' && !isListingDetailCategory(c) && !(isFoodDeal && (c === 'food' || c === 'drink'))
+  );
   const todayStr = format(new Date(), 'yyyy-MM-dd');
 
   const venueUpcoming = getEventsByVenue(event.venue.id).filter((e) => e.id !== event.id && e.date >= todayStr);
@@ -281,11 +292,15 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
       {/* Tags */}
       <div className="mt-5 flex flex-wrap gap-1.5">
-        {isFoodDeal && <Tag className="bg-coral text-navy">{event.categories.includes('drink') && !event.categories.includes('food') ? 'Drinks' : 'Food'}</Tag>}
+        {isFoodDeal && <Tag className="bg-coral text-navy">{specialType}</Tag>}
         {tags.slice(0, 3).map((c) => (
           <CategoryTag key={c} category={c} />
         ))}
         {!isFoodDeal && isFree && <Tag className="bg-sky text-navy">Free</Tag>}
+        {!isFoodDeal && isPayWhatYouCan && <Tag className="bg-sky text-navy">Pay what you can</Tag>}
+        {!isFoodDeal && needsRsvp && <CategoryTag category="rsvp" />}
+        {!isFoodDeal && isSoldOut && <CategoryTag category="sold-out" />}
+        {isFoodDeal && conditions.map((c) => <CategoryTag key={c} category={c} />)}
         {isFoodDeal && isOnNow(event) && (
           <Tag className="bg-success-tint text-success gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-success" /> On now
@@ -298,7 +313,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       {isFoodDeal && (
         <p className="mt-4 text-[18px] text-ink-muted">
           at {event.venue.name}
-          {event.venue.neighborhood ? ` · ${isDowntown(event.venue.neighborhood) ? 'Downtown Kingston' : event.venue.neighborhood}` : ''}
+          {event.venue.neighborhood ? ` · ${isDowntown(event.venue) ? 'Downtown Kingston' : event.venue.neighborhood}` : ''}
         </p>
       )}
 
@@ -326,7 +341,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         {!isFoodDeal && (
           <span className="info-pill">
             <Ticket size={14} className="text-link" />
-            {isFree ? 'Free entry' : displayPrice}
+            {isSoldOut ? 'Sold out' : !displayPrice || displayPrice.toLowerCase() === 'free' ? 'Free entry' : displayPrice}
           </span>
         )}
         {!isFoodDeal && recurrence && (
@@ -342,6 +357,9 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         <div className="min-w-0">
           <p className="eyebrow-sm">About this {isFoodDeal ? 'special' : 'event'}</p>
           <p className="mt-3 whitespace-pre-line text-[17px] leading-[1.6] text-navy">{event.description}</p>
+          {event.lastEditedAt && (
+            <p className="mt-3 text-[13px] text-ink-muted">Edited {format(new Date(event.lastEditedAt), 'MMM d, yyyy')}</p>
+          )}
 
           {displayImage && (
             <div className="relative mt-8 aspect-[16/9] overflow-hidden rounded-[22px] bg-sky-soft">
@@ -414,6 +432,10 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
             <p className="mt-2 text-[13px] text-on-dark-muted">
               {isFoodDeal
                 ? `${allDay ? 'All day' : `Ends ${isToday ? 'today ' : ''}at ${formatTime(event.endTime || event.startTime)}`}.`
+                : isSoldOut
+                ? 'This one’s sold out.'
+                : needsRsvp
+                ? 'RSVP or register before you go.'
                 : isFree
                 ? 'No tickets needed — just show up.'
                 : event.ticketUrl
@@ -432,7 +454,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                   rel="noopener noreferrer"
                   className="btn-sun h-[46px] flex-1"
                 >
-                  {event.ticketUrl && !isFree ? 'Get tickets' : 'Visit the website'}
+                  {event.ticketUrl && needsRsvp ? 'RSVP' : event.ticketUrl && !isFree ? 'Get tickets' : 'Visit the website'}
                 </a>
               ) : (
                 <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn-sun h-[46px] flex-1">

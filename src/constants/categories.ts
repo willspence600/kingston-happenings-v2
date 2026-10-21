@@ -9,13 +9,13 @@ import type { EventCategory } from '@/types/event';
  * Human-readable labels for each category
  */
 export const categoryLabels: Record<EventCategory, string> = {
-  'live-music': 'Live Music',
-  'activity-nights': 'Activity Nights',
-  'daytime': 'Daytime Events',
+  'live-music': 'Live music',
+  'activity-nights': 'Activity nights',
+  'daytime': 'Daytime events',
   'sports': 'Sports',
   'all-day': 'All Day Events',
   '19plus': '19+',
-  'workshop': 'Workshops & Classes',
+  'workshop': 'Workshops & classes',
   'concert': 'Concerts',
   'theatre': 'Theatre & Arts',
   'market': 'Markets',
@@ -25,8 +25,16 @@ export const categoryLabels: Record<EventCategory, string> = {
   'drink': 'Drink',
   'trivia': 'Trivia Nights',
   'festival': 'Festivals',
-  'family': 'Family Friendly',
+  'family': 'Family activities',
   'community': 'Community Events',
+  'sold-out': 'Sold out',
+  'rsvp': 'RSVP required',
+  'happy-hour': 'Happy Hour',
+  'dine-in': 'Dine-in only',
+  'takeout': 'Takeout too',
+  'with-drink': 'With a drink purchase',
+  'while-supplies-last': 'While supplies last',
+  'no-other-offers': 'Not with other offers',
 };
 
 /**
@@ -51,6 +59,14 @@ export const categoryColors: Record<EventCategory, string> = {
   'festival': 'bg-yellow-500',
   'family': 'bg-lime-500',
   'community': 'bg-blue-500',
+  'sold-out': 'bg-slate-500',
+  'rsvp': 'bg-slate-500',
+  'happy-hour': 'bg-slate-500',
+  'dine-in': 'bg-slate-500',
+  'takeout': 'bg-slate-500',
+  'with-drink': 'bg-slate-500',
+  'while-supplies-last': 'bg-slate-500',
+  'no-other-offers': 'bg-slate-500',
 };
 
 /**
@@ -75,6 +91,14 @@ export const categoryColorsMuted: Record<EventCategory, string> = {
   'festival': 'bg-card text-foreground hover:bg-muted border border-border',
   'family': 'bg-card text-foreground hover:bg-muted border border-border',
   'community': 'bg-card text-foreground hover:bg-muted border border-border',
+  'sold-out': 'bg-card text-foreground hover:bg-muted border border-border',
+  'rsvp': 'bg-card text-foreground hover:bg-muted border border-border',
+  'happy-hour': 'bg-card text-foreground hover:bg-muted border border-border',
+  'dine-in': 'bg-card text-foreground hover:bg-muted border border-border',
+  'takeout': 'bg-card text-foreground hover:bg-muted border border-border',
+  'with-drink': 'bg-card text-foreground hover:bg-muted border border-border',
+  'while-supplies-last': 'bg-card text-foreground hover:bg-muted border border-border',
+  'no-other-offers': 'bg-card text-foreground hover:bg-muted border border-border',
 };
 
 /**
@@ -99,6 +123,14 @@ export const categoryColorsActive: Record<EventCategory, string> = {
   'festival': 'bg-yellow-500 text-white',
   'family': 'bg-lime-500 text-white',
   'community': 'bg-blue-500 text-white',
+  'sold-out': 'bg-slate-500 text-white',
+  'rsvp': 'bg-slate-500 text-white',
+  'happy-hour': 'bg-slate-500 text-white',
+  'dine-in': 'bg-slate-500 text-white',
+  'takeout': 'bg-slate-500 text-white',
+  'with-drink': 'bg-slate-500 text-white',
+  'while-supplies-last': 'bg-slate-500 text-white',
+  'no-other-offers': 'bg-slate-500 text-white',
 };
 
 /**
@@ -123,6 +155,14 @@ export const categoryTagStyles: Record<EventCategory, string> = {
   'festival': 'bg-[#ffb547] text-[#1b2a41]',
   'family': 'bg-[#ffe8d6] text-[#a84a12]',
   'community': 'bg-[#fff1d6] text-[#8a5a00]',
+  'sold-out': 'bg-danger text-white',
+  'rsvp': 'bg-[#fff1d6] text-[#8a5a00]',
+  'happy-hour': 'bg-[#ffb547] text-[#1b2a41]',
+  'dine-in': 'bg-sky text-navy',
+  'takeout': 'bg-sky text-navy',
+  'with-drink': 'bg-sky text-navy',
+  'while-supplies-last': 'bg-sky text-navy',
+  'no-other-offers': 'bg-sky text-navy',
 };
 
 /**
@@ -147,6 +187,14 @@ export const categoryDotColors: Record<EventCategory, string> = {
   'festival': 'bg-[#ffb547]',
   'family': 'bg-[#e07a3a]',
   'community': 'bg-[#e0a030]',
+  'sold-out': 'bg-[#c4452b]',
+  'rsvp': 'bg-[#e0a030]',
+  'happy-hour': 'bg-[#ffb547]',
+  'dine-in': 'bg-[#3e7ca6]',
+  'takeout': 'bg-[#3e7ca6]',
+  'with-drink': 'bg-[#3e7ca6]',
+  'while-supplies-last': 'bg-[#3e7ca6]',
+  'no-other-offers': 'bg-[#3e7ca6]',
 };
 
 /**
@@ -191,3 +239,39 @@ export const allCategories: EventCategory[] = [
   'community',
 ];
 
+
+/**
+ * Event categories organizers can pick on Submit — the same set (and order) as the
+ * Browse page category rail. 19+ doubles as the age-limit control.
+ */
+export const eventCategoryOptions: EventCategory[] = [
+  'live-music',
+  'activity-nights',
+  'concert',
+  'daytime',
+  'sports',
+  'theatre',
+  'market',
+  'workshop',
+  'family',
+  '19plus',
+];
+
+/** Fine-print conditions a food & drink special can carry (shown as tags on the detail page) */
+export const specialConditionCategories: EventCategory[] = [
+  'dine-in',
+  'takeout',
+  'with-drink',
+  'while-supplies-last',
+  'no-other-offers',
+];
+
+/**
+ * Listing-detail flags stored alongside categories. They render as tags on the detail
+ * page but aren't browse categories (never a listing's "primary" category).
+ */
+export const listingDetailCategories: EventCategory[] = ['sold-out', 'rsvp', 'happy-hour', ...specialConditionCategories];
+
+export function isListingDetailCategory(category: EventCategory) {
+  return listingDetailCategories.includes(category);
+}

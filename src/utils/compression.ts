@@ -1,9 +1,14 @@
 /**
  * Compress an image file client-side using a canvas.
- * Scales the image down to a max width and re-encodes as JPEG.
+ * Scales the image down to a max width and re-encodes as JPEG (or PNG, to keep transparency).
  * Falls back to the original base64 data URL if compression isn't possible.
  */
-export async function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<string> {
+export async function compressImage(
+  file: File,
+  maxWidth = 800,
+  quality = 0.8,
+  type: 'image/jpeg' | 'image/png' = 'image/jpeg'
+): Promise<string> {
   const originalDataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => resolve(e.target?.result as string);
@@ -37,7 +42,7 @@ export async function compressImage(file: File, maxWidth = 800, quality = 0.8): 
     }
 
     ctx.drawImage(img, 0, 0, width, height);
-    return canvas.toDataURL('image/jpeg', quality);
+    return canvas.toDataURL(type, quality);
   } catch {
     return originalDataUrl;
   }

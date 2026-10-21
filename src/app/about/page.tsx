@@ -1,10 +1,32 @@
 import Link from 'next/link';
 import { Bell, Bookmark, Calendar, Heart, Mail, MapPin, Send, Users } from 'lucide-react';
 import { Rings } from '@/components/brand';
+import prisma from '@/lib/prisma';
 
 const CONTACT_EMAIL = 'kingstonhappenings.ca@gmail.com';
 
-export default function AboutPage() {
+// Counts are refreshed every 5 minutes
+export const revalidate = 300;
+
+async function getStats() {
+  try {
+    const [events, venues] = await Promise.all([
+      // Every event ever listed; each date of a recurring event counts once
+      prisma.event.count({
+        where: { status: { in: ['approved', 'cancelled'] }, NOT: { categories: { some: { name: 'food-deal' } } } },
+      }),
+      // Same set as the Venues page
+      prisma.venue.count({ where: { status: 'approved' } }),
+    ]);
+    return { events: events.toLocaleString('en-CA'), venues: venues.toLocaleString('en-CA') };
+  } catch (error) {
+    console.error('[About] Failed to load stats:', error);
+    return { events: '—', venues: '—' };
+  }
+}
+
+export default async function AboutPage() {
+  const stats = await getStats();
   return (
     <div>
       {/* Hero */}
@@ -49,8 +71,8 @@ export default function AboutPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { icon: <Calendar size={18} />, value: 'X', label: 'Events listed', tone: 'bg-sun text-navy' },
-              { icon: <MapPin size={18} />, value: 'X', label: 'Local venues', tone: 'card text-navy' },
+              { icon: <Calendar size={18} />, value: stats.events, label: 'Events listed', tone: 'bg-sun text-navy' },
+              { icon: <MapPin size={18} />, value: stats.venues, label: 'Local venues', tone: 'card text-navy' },
               { icon: <Users size={18} />, value: 'X', label: 'Monthly visitors', tone: 'card text-navy' },
               { icon: <Heart size={18} className="text-sun" />, value: '100%', label: 'Community driven', tone: 'bg-navy text-white' },
             ].map((s) => (

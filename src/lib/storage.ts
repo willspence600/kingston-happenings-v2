@@ -72,3 +72,45 @@ export async function deleteImage(imageUrl: string): Promise<void> {
   if (parts.length < 2 || !parts[1]) return;
   await supabaseAdmin.storage.from(BUCKET).remove([parts[1]]);
 }
+
+const DOCUMENTS_BUCKET = 'organizer-documents';
+let documentsBucketReady = false;
+
+/**
+ * Upload a base64 data URL (PDF or image) to the private organizer documents
+ * bucket. Returns the object path; admins view it through a signed URL.
+ */
+export async function uploadPrivateDocument(base64DataUrl: string, basePath: string): Promise<string> {
+  if (!documentsBucketReady) {
+    const { error } = await supabaseAdmin.storage.createBucket(DOCUMENTS_BUCKET, {
+      public: false,
+      fileSizeLimit: 5 * 1024 * 1024, // 5 MB
+      allowedMimeTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+    });
+    if (error && !error.message.includes('already exists')) {
+      throw new Error(`Failed to create storage bucket: ${error.message}`);
+    }
+    documentsBucketReady = true;
+  }
+
+  const match = base64DataUrl.match(/^data:(application\/pdf|image\/(?:jpeg|png|webp));base64,(.+)$/);
+  if (!match) throw new Error('Invalid document data URL');
+
+  const mimeType = match[1];
+  const ext = mimeType === 'application/pdf' ? 'pdf' : mimeType.split('/')[1] === 'jpeg' ? 'jpg' : mimeType.split('/')[1];
+  const path = `${basePath}.${ext}`;
+
+  const { error } = await supabaseAdmin.storage
+    .from(DOCUMENTS_BUCKET)
+    .upload(path, Buffer.from(match[2], 'base64'), { contentType: mimeType, upsert: true });
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  return path;
+}
+
+/** Short-lived link to a private organizer document */
+export async function getDocumentSignedUrl(path: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin.storage.from(DOCUMENTS_BUCKET).createSignedUrl(path, 60 * 60);
+  if (error) return null;
+  return data.signedUrl;
+}

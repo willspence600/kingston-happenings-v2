@@ -19,7 +19,10 @@ import {
   ArrowLeft,
   Repeat,
 } from 'lucide-react';
-import { categoryLabels, EventCategory, browseCategories } from '@/types/event';
+import { categoryLabels, EventCategory } from '@/types/event';
+import { eventCategoryOptions } from '@/constants/categories';
+import { useOrganizerVerification } from '@/hooks/useOrganizerVerification';
+import type { Event } from '@/types/event';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { DatePicker, VenueSelector } from '@/components';
@@ -42,6 +45,7 @@ const MAX_DESCRIPTION_LENGTH = 500;
 export default function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user, isAdmin, isLoading: authLoading } = useAuth();
+  const { isVerifiedOrganizer } = useOrganizerVerification();
   const { getEventById, venues, refreshEvents } = useEvents();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -64,7 +68,29 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     });
   };
 
-  const event = getEventById(id);
+  // Pending/rejected submissions aren't in the public events list, so fall back to the API.
+  const contextEvent = getEventById(id);
+  const [fetchedEvent, setFetchedEvent] = useState<Event | null>(null);
+  const [fetchingEvent, setFetchingEvent] = useState(false);
+  useEffect(() => {
+    if (contextEvent || fetchedEvent) return;
+    let cancelled = false;
+    setFetchingEvent(true);
+    fetch(`/api/events/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.event) setFetchedEvent(data.event);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setFetchingEvent(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, contextEvent, fetchedEvent]);
+  const event = contextEvent ?? fetchedEvent ?? undefined;
+  const isVerified = isVerifiedOrganizer;
   const isFoodDeal = event?.categories.includes('food-deal') ?? false;
   const entityLabel = isFoodDeal ? 'Food & Drink Special' : 'Event';
   const isRecurring = Boolean(event?.isRecurring && event?.seriesId);
@@ -75,6 +101,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [venueId, setVenueId] = useState('');
+  // Only Major Venues (listed on Coming up) can show a photo
+  const canAddPhoto = !!venues.find((v) => v.id === venueId)?.isMajor;
   const [newVenueName, setNewVenueName] = useState('');
   const [newVenueAddress, setNewVenueAddress] = useState('');
   const [categories, setCategories] = useState<EventCategory[]>([]);
@@ -231,7 +259,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     }
   };
 
-  if (authLoading) {
+  if (authLoading || (!event && fetchingEvent)) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <Loader2 size={32} className="animate-spin text-primary" />
@@ -278,14 +306,21 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           </div>
           <h1 className="display-md mb-4">{entityLabel} Updated!</h1>
           <p className="text-muted-foreground mb-8">
-            {editScope === 'future'
-              ? 'Your changes have been applied to this and all future occurrences.'
-              : 'Your changes have been saved successfully.'}
+            {isVerified
+              ? editScope === 'future'
+                ? 'Your changes are live for this and all future occurrences.'
+                : 'Your changes are live.'
+              : 'Thanks! Your changes have been sent for review. We review edits within 24 hours, and your listing will be republished once it’s approved.'}
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href={`/events/${id}`} className="btn-sun">
-              View {entityLabel}
+            <Link href="/my-events?tab=submitted" className="btn-sun">
+              Back to my submissions
             </Link>
+            {isVerified && (
+              <Link href={`/events/${id}`} className="btn-outline">
+                View {entityLabel}
+              </Link>
+            )}
             <button
               onClick={() => setIsSaved(false)}
               className="px-6 py-3 border border-border rounded-xl font-medium hover:bg-muted transition-colors"
@@ -548,7 +583,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
               </h3>
               <p className="text-sm text-muted-foreground mb-4">Select all that apply</p>
               <div className="flex flex-wrap gap-2">
-                {browseCategories.map((category) => {
+                {eventCategoryOptions.map((category) => {
                   const isSelected = categories.includes(category);
                   return (
                     <button
@@ -636,6 +671,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     </div>
                   </div>
 
+                  {canAddPhoto && (
                   <div>
                     <label className="field-label">Event Image</label>
                     {imagePreview ? (
@@ -676,10 +712,17 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                       className="hidden"
                     />
                   </div>
+                  )}
                 </>
               )}
             </div>
           </section>
+
+          {!isVerified && (
+            <p className="text-[13px] text-ink-muted">
+              Edits to your listing are reviewed by our team before they go live again.
+            </p>
+          )}
 
           <button
             type="submit"
@@ -694,7 +737,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             ) : (
               <>
                 <Save size={20} />
-                Save Changes
+                {isVerified ? 'Save & publish' : 'Save & resubmit for review'}
               </>
             )}
           </button>

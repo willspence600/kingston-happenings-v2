@@ -18,17 +18,32 @@ const footerLinks = [
 export default function Footer() {
   const pathname = usePathname();
   const [email, setEmail] = useState('');
+  const [subscribeState, setSubscribeState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+  const [subscribeError, setSubscribeError] = useState('');
   const currentYear = new Date().getFullYear();
 
   // Auth screens are full-bleed split layouts without the footer
   if (pathname === '/login' || pathname === '/register') return null;
 
-  const handleSubscribe = (e: React.FormEvent) => {
+  const handleSubscribe = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
-    const subject = encodeURIComponent('Subscribe me to Kingston Happenings');
-    const body = encodeURIComponent(`Please add ${email.trim()} to the Kingston Happenings mailing list.`);
-    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}&body=${body}`;
+    setSubscribeState('sending');
+    setSubscribeError('');
+    try {
+      const res = await fetch('/api/newsletter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not subscribe. Please try again.');
+      setSubscribeState('done');
+      setEmail('');
+    } catch (err) {
+      setSubscribeState('error');
+      setSubscribeError(err instanceof Error ? err.message : 'Could not subscribe. Please try again.');
+    }
   };
 
   return (
@@ -61,10 +76,18 @@ export default function Footer() {
                 placeholder="Your email"
                 className="h-11 min-w-0 flex-1 bg-transparent pl-4 text-[16px] text-white placeholder:text-on-dark-muted outline-none"
               />
-              <button type="submit" className="btn-sun px-[22px]">
-                Subscribe
+              <button type="submit" className="btn-sun px-[22px]" disabled={subscribeState === 'sending'}>
+                {subscribeState === 'sending' ? 'Subscribing…' : 'Subscribe'}
               </button>
             </form>
+            {subscribeState === 'done' && <p className="text-[14px] font-medium text-sun">You&rsquo;re subscribed — thanks!</p>}
+            {subscribeState === 'error' && <p className="text-[14px] text-coral">{subscribeError}</p>}
+            <a
+              href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Website issue / suggestion')}`}
+              className="mt-2 inline-flex w-fit items-center gap-2 rounded-full border border-white/40 px-4 py-2.5 text-[13px] text-white transition-colors hover:border-sun hover:text-sun"
+            >
+              Issues with the website or suggestions? Contact {CONTACT_EMAIL}
+            </a>
           </div>
 
           <ul className="flex flex-col gap-[18px] md:items-end">

@@ -27,7 +27,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  register: (data: RegisterData) => Promise<{ success: boolean; error?: string; needsVerification?: boolean }>;
+  register: (data: RegisterData) => Promise<{ success: boolean; error?: string; needsVerification?: boolean; userId?: string }>;
   logout: () => Promise<void>;
   isAdmin: boolean;
   isOrganizer: boolean;
@@ -43,6 +43,8 @@ interface RegisterData {
   venueName?: string;
   /** Extra organizer sign-up details (venue info, hours, accessibility) kept on the auth user for admin review */
   organizerApplication?: Record<string, unknown>;
+  /** Email opt-ins chosen on sign-up, keyed by option */
+  emailPreferences?: Record<string, boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -133,6 +135,17 @@ function buildUser(supabaseUser: SupabaseUser, profile: Profile | null): User {
   };
 }
 
+/**
+ * Where the email confirmation link sends people. NEXT_PUBLIC_SITE_URL pins it to the live
+ * site, so signing up from a preview deploy or a local network address doesn't email out a
+ * link to an address that won't load. It must also be listed under Supabase Auth -> URL
+ * Configuration -> Redirect URLs, or Supabase falls back to its Site URL.
+ */
+function authRedirectUrl(): string {
+  const origin = process.env.NEXT_PUBLIC_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : 'https://kingstonhappenings.ca');
+  return `${origin.replace(/\/+$/, '')}/auth/callback`;
+}
+
 const AUTH_CACHE_KEY = 'kh_auth_user';
 
 function readUserCache(): User | null {
@@ -159,6 +172,31 @@ function writeUserCache(user: User | null) {
 
 // Helper to format auth errors into user-friendly messages
 function formatAuthError(error: AuthError): string {
+  switch (error.code) {
+    case 'user_already_exists':
+    case 'email_exists':
+      return 'An account with this email already exists. Please sign in instead.';
+    case 'email_address_invalid':
+      return 'That email address doesn’t look right. Please check it and try again.';
+    case 'weak_password':
+      return `That password is too weak. ${error.message}`.trim();
+    case 'over_email_send_rate_limit':
+    case 'over_request_rate_limit':
+      return 'Too many attempts in a short time. Please wait a few minutes and try again.';
+    case 'signup_disabled':
+    case 'email_provider_disabled':
+      return 'New sign-ups are turned off right now. Please email kingstonhappenings.ca@gmail.com.';
+  }
+  const message = error.message || '';
+  if (/error sending (confirmation|magic link) email/i.test(message)) {
+    return 'We couldn’t send your confirmation email. Please double-check your email address, or try again in a few minutes.';
+  }
+  if (/database error/i.test(message)) {
+    return 'Something went wrong saving your account on our end. Please try again, or email kingstonhappenings.ca@gmail.com if it keeps happening.';
+  }
+  if (/rate limit/i.test(message)) {
+    return 'Too many attempts in a short time. Please wait a few minutes and try again.';
+  }
   switch (error.message) {
     case 'Invalid login credentials':
       return 'Invalid email or password. Please check your credentials and try again.';
@@ -389,26 +427,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (data: RegisterData): Promise<{ success: boolean; error?: string; needsVerification?: boolean }> => {
+  const register = async (data: RegisterData): Promise<{ success: boolean; error?: string; needsVerification?: boolean; userId?: string }> => {
     console.log('[Auth] Register attempt:', { email: data.email, role: data.role });
     try {
-      // Sign up with Supabase Auth
-      // Get the redirect URL - use current domain for email confirmation
-      const redirectUrl = typeof window !== 'undefined' 
-        ? `${window.location.origin}/auth/callback`
-        : 'https://kingstonhappenings.ca/auth/callback';
-      
       const { data: authData, error } = await supabase.auth.signUp({
         email: data.email.toLowerCase().trim(),
         password: data.password,
         options: {
-          emailRedirectTo: redirectUrl,
+          emailRedirectTo: authRedirectUrl(),
           data: {
             name: data.name,
             full_name: data.name,
             role: data.role,
             venueName: data.role === 'organizer' ? data.venueName : undefined,
             organizerApplication: data.role === 'organizer' ? data.organizerApplication : undefined,
+            emailPreferences: data.emailPreferences,
+            agreedToTermsAt: new Date().toISOString(),
           },
         },
       });
@@ -442,11 +476,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (emailVerified) {
           updateUser(buildUser(authData.user, profile));
-          return { success: true };
+          return { success: true, userId: authData.user.id };
         } else {
           // Email not verified - return success but don't set user
           // The registration page will show the verification message
-          return { success: true, needsVerification: true };
+          return { success: true, needsVerification: true, userId: authData.user.id };
         }
       }
 
@@ -481,16 +515,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshUser,
         resendVerificationEmail: async (email: string) => {
           try {
-            // Get the redirect URL - use current domain for email confirmation
-            const redirectUrl = typeof window !== 'undefined' 
-              ? `${window.location.origin}/auth/callback`
-              : 'https://kingstonhappenings.ca/auth/callback';
-            
             const { error } = await supabase.auth.resend({
               type: 'signup',
               email: email.toLowerCase().trim(),
               options: {
-                emailRedirectTo: redirectUrl,
+                emailRedirectTo: authRedirectUrl(),
               },
             });
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, canAutoPublish } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { uploadImage } from '@/lib/storage';
 import { generateRecurringDates } from '@/utils/recurrence';
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     const events = sort === 'venue' ? eventsQueried : eventsQueried.reverse();
 
     // For pending events, fetch submitter information from Supabase profiles
-    let submitterMap: Record<string, { name: string; role: 'user' | 'organizer' | 'admin' }> = {};
+    let submitterMap: Record<string, { name: string; role: 'user' | 'organizer' | 'admin'; verified?: boolean }> = {};
     if (status === 'pending') {
       const submittedByIds = [...new Set(events.map(e => e.submittedById).filter(Boolean) as string[])];
       
@@ -127,6 +127,15 @@ export async function GET(request: NextRequest) {
             return acc;
           }, {} as Record<string, { name: string; role: 'user' | 'organizer' | 'admin' }>);
         }
+
+        // Organizers verified by an admin publish without review, so tag who's verified
+        const organizerIds = Object.entries(submitterMap).filter(([, p]) => p.role === 'organizer').map(([id]) => id);
+        await Promise.all(
+          organizerIds.map(async (uid) => {
+            const { data } = await supabaseAdmin.auth.admin.getUserById(uid);
+            submitterMap[uid].verified = data?.user?.app_metadata?.verifiedOrganizer === true;
+          })
+        );
       }
     }
 
@@ -138,6 +147,7 @@ export async function GET(request: NextRequest) {
           ...baseEvent,
           submitterName: submitterMap[event.submittedById].name,
           submitterRole: submitterMap[event.submittedById].role,
+          submitterVerified: submitterMap[event.submittedById].verified === true,
         };
       }
       
@@ -179,6 +189,7 @@ export async function POST(request: NextRequest) {
       venueId,
       newVenueName,
       newVenueAddress,
+      newVenueIsDowntown,
       categories,
       price,
       ticketUrl,
@@ -214,6 +225,7 @@ export async function POST(request: NextRequest) {
           data: {
             name: newVenueName,
             address: newVenueAddress,
+            isDowntownDistrict: Boolean(newVenueIsDowntown),
             status: venueStatus,
           },
         });
@@ -228,7 +240,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const status = user.role === 'admin' ? 'approved' : 'pending';
+    const status = canAutoPublish(user) ? 'approved' : 'pending';
     const allDay = Boolean(isAllDay) || (startTime === '00:00' && !endTime);
 
     // Resolve recurrence days
@@ -242,10 +254,13 @@ export async function POST(request: NextRequest) {
         ? generateRecurringDates(date, recurrencePattern, recurrenceEndDate, resolvedDays)
         : [date];
 
-    // Food & drink specials do not use images
+    // Food & drink specials do not use images, and only Major Venues (shown on
+    // Coming up) can attach a photo to an event
     const isFoodDeal = (categories as string[]).includes('food-deal');
+    const venue = await prisma.venue.findUnique({ where: { id: finalVenueId }, select: { isMajor: true } });
+    const canAddPhoto = !!venue?.isMajor;
     let finalImageUrl: string | null = null;
-    if (!isFoodDeal) {
+    if (!isFoodDeal && canAddPhoto) {
       finalImageUrl = imageUrl || null;
       if (imageUrl && imageUrl.startsWith('data:')) {
         const tempId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

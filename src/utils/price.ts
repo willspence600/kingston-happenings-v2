@@ -23,3 +23,9 @@ export function formatPrice(price?: string | null): string {
 
   return trimmed;
 }
+
+/** "Free" and "Free with RSVP" both count as free entry */
+export function isFreePrice(price?: string | null): boolean {
+  const p = (price || '').trim().toLowerCase();
+  return p === 'free' || p.startsWith('free with');
+}

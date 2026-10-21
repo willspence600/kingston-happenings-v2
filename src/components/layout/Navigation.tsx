@@ -8,6 +8,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
 import { Wordmark } from '@/components/brand';
+import { useOrganizerVerification } from '@/hooks/useOrganizerVerification';
+import { useVenueNotices } from '@/hooks/useVenueNotices';
 
 const navLinks = [
   { href: '/', label: 'Today' },
@@ -29,6 +31,17 @@ export default function Navigation() {
   const { pendingEvents } = useEvents();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { organizerApproved, organizerVenueIds } = useOrganizerVerification();
+  const { notices } = useVenueNotices();
+  // Approved organizers linked to a venue get a My Venue tab (with a badge for admin changes)
+  const showMyVenue = user?.role === 'organizer' && organizerApproved && organizerVenueIds.length > 0;
+  const links = showMyVenue ? [...navLinks, { href: '/my-venue', label: 'My Venue' }] : navLinks;
+  const noticeBadge = (href: string) =>
+    href === '/my-venue' && notices.length > 0 ? (
+      <span className="ml-0.5 rounded-full bg-coral px-1.5 py-0.5 text-[10px] font-bold leading-none text-white" aria-label={`${notices.length} venue updates`}>
+        {notices.length}
+      </span>
+    ) : null;
 
   const pendingCount = useMemo(() => {
     // Count unique series (or standalone events) — one badge per series, not per occurrence
@@ -65,7 +78,7 @@ export default function Navigation() {
 
         {/* Desktop links */}
         <div className="hidden lg:flex items-center gap-7">
-          {navLinks.map((link) => {
+          {links.map((link) => {
             const active = isActivePath(pathname, link.href);
             return (
               <Link
@@ -77,6 +90,7 @@ export default function Navigation() {
               >
                 {active && <span className="h-1.5 w-1.5 rounded-full bg-coral" />}
                 {link.label}
+                {noticeBadge(link.href)}
               </Link>
             );
           })}
@@ -193,7 +207,7 @@ export default function Navigation() {
             className="lg:hidden overflow-hidden border-t border-line bg-white"
           >
             <div className="flex flex-col gap-1 px-4 py-4">
-              {navLinks.map((link) => {
+              {links.map((link) => {
                 const active = isActivePath(pathname, link.href);
                 return (
                   <Link
@@ -206,6 +220,7 @@ export default function Navigation() {
                   >
                     {active && <span className="h-1.5 w-1.5 rounded-full bg-coral" />}
                     {link.label}
+                    {noticeBadge(link.href)}
                   </Link>
                 );
               })}

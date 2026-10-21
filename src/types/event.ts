@@ -23,7 +23,16 @@ export type EventCategory =
   | 'trivia'
   | 'festival'
   | 'family'
-  | 'community';
+  | 'community'
+  // Listing details (shown as tags on the detail page, not browse categories)
+  | 'sold-out'
+  | 'rsvp'
+  | 'happy-hour'
+  | 'dine-in'
+  | 'takeout'
+  | 'with-drink'
+  | 'while-supplies-last'
+  | 'no-other-offers';
 
 /**
  * Event status values
@@ -52,7 +61,24 @@ export interface Venue {
   imageUrl?: string;
   coverImageUrl?: string;
   promotionTier?: string;
+  eventPromotionTier?: string;
+  specialPromotionTier?: string;
+  isMajor?: boolean;
+  isDowntownDistrict?: boolean;
+  venueTypes?: string[];
+  phone?: string;
+  instagram?: string;
+  about?: string;
+  hours?: VenueHours | null;
+  accessibility?: string[];
+  accessibilityNotes?: string;
+  status?: string;
 }
+
+/**
+ * Weekly opening hours, keyed by short day name (Mon … Sun). Times are HH:mm.
+ */
+export type VenueHours = Record<string, { open: string; close: string; closed: boolean }>;
 
 /**
  * Event data model
@@ -91,6 +117,14 @@ export interface Event {
   submittedById?: string;
   submitterName?: string;
   submitterRole?: UserRole;
+  submitterVerified?: boolean;
+  // Admin's note to the submitter when the listing was rejected
+  rejectionReason?: string;
+  // Shown at Standard regardless of the venue's promotion tier
+  hiddenFromPromotion?: boolean;
+  // ISO timestamp of the last edit by the submitter/admin
+  lastEditedAt?: string;
+  createdAt?: string;
 }
 
 /**

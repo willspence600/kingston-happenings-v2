@@ -7,6 +7,14 @@ export interface AuthUser {
   role: 'user' | 'organizer' | 'admin';
   venueName?: string;
   createdAt: string;
+  /** Admins, plus organizers an admin has verified (stored in auth app_metadata) */
+  isVerifiedOrganizer: boolean;
+  /** ISO timestamp of a pending "verified organizer" request, if any */
+  verificationRequestedAt?: string;
+  /** Organizer accounts are approved by an admin after sign-up (accounts made before sign-up applications existed count as approved) */
+  organizerApproved: boolean;
+  /** Venues this organizer is associated with (set by an admin on approval) */
+  organizerVenueIds: string[];
 }
 
 interface Profile {
@@ -14,6 +22,16 @@ interface Profile {
   role: 'user' | 'organizer' | 'admin';
   name: string | null;
   venue_name: string | null;
+}
+
+export function isOrganizerApproved(
+  role: string,
+  metadata: Record<string, unknown>,
+  appMetadata: Record<string, unknown>
+): boolean {
+  if (role === 'admin') return true;
+  if (role !== 'organizer') return false;
+  return appMetadata.organizerApproved === true || appMetadata.verifiedOrganizer === true || !metadata.organizerApplication;
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
@@ -34,14 +52,20 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
       .single();
 
     const metadata = user.user_metadata || {};
+    const appMetadata = user.app_metadata || {};
+    const role = (profile?.role as AuthUser['role']) || 'user';
     
     return {
       id: user.id,
       email: user.email || '',
       name: profile?.name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'User',
-      role: (profile?.role as AuthUser['role']) || 'user', // Role from profiles table
+      role, // Role from profiles table
       venueName: profile?.venue_name || metadata.venueName,
       createdAt: user.created_at,
+      isVerifiedOrganizer: role === 'admin' || (role === 'organizer' && appMetadata.verifiedOrganizer === true),
+      verificationRequestedAt: appMetadata.verificationRequestedAt || undefined,
+      organizerApproved: isOrganizerApproved(role, metadata, appMetadata),
+      organizerVenueIds: Array.isArray(appMetadata.organizerVenueIds) ? appMetadata.organizerVenueIds : [],
     };
   } catch (error) {
     console.error('Error getting current user:', error);
@@ -63,4 +87,9 @@ export async function requireAdmin(): Promise<AuthUser> {
     throw new Error('Forbidden');
   }
   return user;
+}
+
+/** Verified organizers and admins publish listings without admin review */
+export function canAutoPublish(user: AuthUser | null): boolean {
+  return !!user && user.isVerifiedOrganizer;
 }

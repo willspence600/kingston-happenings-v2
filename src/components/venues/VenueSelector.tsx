@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type { Venue } from '@/types/event';
-import { MapPin, X, Plus, ChevronDown, Search } from 'lucide-react';
+import { MapPin, X, Plus, ChevronDown, Search, Check } from 'lucide-react';
 
 interface VenueSelectorProps {
   venues: Venue[];
@@ -12,6 +12,11 @@ interface VenueSelectorProps {
   onVenueSelect: (venueId: string) => void;
   onNewVenueNameChange: (name: string) => void;
   onNewVenueAddressChange: (address: string) => void;
+  /** Downtown Kingston District checkbox, shown only while adding a new venue */
+  newVenueIsDowntown?: boolean;
+  onNewVenueIsDowntownChange?: (value: boolean) => void;
+  label?: string;
+  placeholder?: string;
   required?: boolean;
   id?: string;
 }
@@ -24,6 +29,10 @@ export default function VenueSelector({
   onVenueSelect,
   onNewVenueNameChange,
   onNewVenueAddressChange,
+  newVenueIsDowntown = false,
+  onNewVenueIsDowntownChange,
+  label = 'Select a Venue',
+  placeholder = 'Type to search venues...',
   required = false,
   id,
 }: VenueSelectorProps) {
@@ -95,6 +104,7 @@ export default function VenueSelector({
     setIsOpen(false);
     onNewVenueNameChange('');
     onNewVenueAddressChange('');
+    onNewVenueIsDowntownChange?.(false);
   };
 
   const displayValue = selectedVenue
@@ -105,7 +115,7 @@ export default function VenueSelector({
     <div className="space-y-4">
       <div ref={containerRef} className="relative">
         <label htmlFor={id} className="field-label">
-          Select a Venue {required && '*'}
+          {label} {required && '*'}
         </label>
         
         <div className="relative">
@@ -117,7 +127,7 @@ export default function VenueSelector({
             value={displayValue}
             onChange={(e) => handleInputChange(e.target.value)}
             onFocus={() => setIsOpen(true)}
-            placeholder="Type to search venues..."
+            placeholder={placeholder}
             className={`field pl-10 pr-10 ${
               required && !selectedVenueId && !showNewVenueFields ? 'border-red-300' : ''
             }`}
@@ -236,6 +246,26 @@ export default function VenueSelector({
               Please provide the complete street address including city and province
             </p>
           </div>
+          {onNewVenueIsDowntownChange && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={newVenueIsDowntown}
+              onClick={() => onNewVenueIsDowntownChange(!newVenueIsDowntown)}
+              className="flex items-center gap-3 text-left text-[14px] text-navy"
+            >
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] border-[1.5px] transition-colors ${
+                  newVenueIsDowntown ? 'border-navy bg-navy text-white' : 'border-line bg-white'
+                }`}
+              >
+                {newVenueIsDowntown && <Check size={13} strokeWidth={3} />}
+              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/dk-badge.svg" alt="Downtown Kingston" width={24} height={24} className="shrink-0" />
+              This venue is part of the Downtown Kingston District
+            </button>
+          )}
         </div>
       ) : null}
     </div>

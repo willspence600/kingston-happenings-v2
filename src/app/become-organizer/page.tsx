@@ -1,37 +1,28 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, AtSign, Check, ChevronDown, Eye, Loader2, Pencil, Search, Store } from 'lucide-react';
+import { AlertCircle, Check, Eye, EyeOff, Loader2, Pencil, Store } from 'lucide-react';
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvents } from '@/contexts/EventsContext';
+import { ACCESSIBILITY_OPTIONS } from '@/constants/venueDetails';
+import { Dropzone, Field, VenueFields, draftToApplication, emptyVenue, type VenueDraft } from '@/components/venues/VenueDraftFields';
+import { useSignupEmailOptions } from '@/hooks/useEmailOptions';
+import type { OrganizerApplication, OrganizerVenueApplication } from '@/lib/organizerApplication';
 
 const roles = ['Owner', 'Manager', 'Marketing / social media', 'Promoter / booker', 'Event Coordinator / Artist'];
-const venueTypes = ['Restaurant', 'Bar / pub', 'Café', 'Brewery / winery', 'Music venue', 'Theatre / arts space', 'Gallery', 'Community space', 'Other'];
-const accessibilityOptions = [
-  'Step-free entrance',
-  'Accessible washroom',
-  'Elevator / everything on one level',
-  'Accessible parking nearby',
-  'Seating available',
-  'Quiet or sensory-friendly space',
-  'Service animals welcome',
-  'Digital menu available',
-];
-const neighbourhoods = ['Downtown', 'Williamsville', 'Sydenham', 'Portsmouth', 'Queen’s area', 'Waterfront', 'West End', 'Other'];
-const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const accessibilityOptions = ACCESSIBILITY_OPTIONS;
+// Requests go through a serverless function, which caps the body size
+const MAX_DOCUMENT_BYTES = 3 * 1024 * 1024;
 
-type Hours = Record<string, { open: string; close: string; closed: boolean }>;
-
-function Section({ number, title, hint, children, aside }: { number: number; title: string; hint?: string; children: ReactNode; aside?: ReactNode }) {
+function Section({ number, title, hint, children }: { number: number; title: string; hint?: string; children: ReactNode }) {
   return (
     <section className="card p-5 sm:p-7">
       <h3 className="flex items-center gap-3 text-[20px] font-bold text-navy">
         <span className="flex h-7 w-7 items-center justify-center rounded-full bg-navy text-[13px] font-bold text-white">{number}</span>
         {title}
-        {aside}
       </h3>
       {hint && <p className="mt-4 text-[13px] text-ink-muted">{hint}</p>}
       <div className="mt-5 flex flex-col gap-5">{children}</div>
@@ -39,19 +30,58 @@ function Section({ number, title, hint, children, aside }: { number: number; tit
   );
 }
 
-function Field({ label, id, children, hint }: { label: string; id?: string; children: ReactNode; hint?: string }) {
+function PasswordInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  minLength,
+  shown,
+  onToggle,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  minLength?: number;
+  shown: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <div>
-      <label htmlFor={id} className="field-label">
-        {label}
-      </label>
-      {children}
-      {hint && <p className="field-hint mt-1.5">{hint}</p>}
+    <div className="relative">
+      <input
+        id={id}
+        type={shown ? 'text' : 'password'}
+        required
+        minLength={minLength}
+        autoComplete="new-password"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="field pr-12"
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        className="absolute right-4 top-1/2 -translate-y-1/2 text-ink-muted hover:text-navy"
+        aria-label={shown ? 'Hide password' : 'Show password'}
+      >
+        {shown ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
     </div>
   );
 }
 
-function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function ErrorBanner({ message, className = '' }: { message: string; className?: string }) {
+  return (
+    <div role="alert" className={`flex items-start gap-3 rounded-[14px] bg-danger-tint p-4 text-[14px] text-danger ${className}`}>
+      <AlertCircle size={18} className="mt-0.5 shrink-0" />
+      <p>{message}</p>
+    </div>
+  );
+}
+
+function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode }) {
   return (
     <button type="button" role="checkbox" aria-checked={checked} onClick={() => onChange(!checked)} className="flex items-center gap-3 text-left text-[14px] text-navy">
       <span
@@ -66,22 +96,13 @@ function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v
   );
 }
 
-function MultiChips({ options, value, onChange }: { options: string[]; value: string[]; onChange: (v: string[]) => void }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map((o) => {
-        const active = value.includes(o);
-        return (
-          <button key={o} type="button" className="chip h-10" data-active={active} onClick={() => onChange(active ? value.filter((x) => x !== o) : [...value, o])}>
-            {o}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function ApplicationReceived({ email, venueName }: { email: string; venueName: string }) {
+function ApplicationReceived({ email, venueNames, uploadFailed }: { email: string; venueNames: string[]; uploadFailed: boolean }) {
+  const venueLabel =
+    venueNames.length === 0
+      ? 'your venue'
+      : venueNames.length === 1
+        ? venueNames[0]
+        : `${venueNames.slice(0, -1).join(', ')} and ${venueNames[venueNames.length - 1]}`;
   return (
     <div className="page-container pb-24 pt-12">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-sun text-navy">
@@ -96,12 +117,21 @@ function ApplicationReceived({ email, venueName }: { email: string; venueName: s
       <p className="mt-4 max-w-[520px] text-[17px] leading-[1.5] text-ink-muted">
         Thanks! We&rsquo;ll confirm you within 1–2 business days. Check your inbox at {email} to verify your email address.
       </p>
+      {uploadFailed && (
+        <div role="alert" className="mt-6 flex max-w-[620px] items-start gap-3 rounded-[14px] bg-[#fff1d6] p-4 text-[14px] text-[#8a5a00]">
+          <AlertCircle size={18} className="mt-0.5 shrink-0" />
+          <p>
+            Your account was created, but your logo or verification document didn&rsquo;t upload. Reply to the confirmation email with the
+            file attached and we&rsquo;ll add it for you.
+          </p>
+        </div>
+      )}
 
       <div className="card mt-10 grid grid-cols-1 gap-8 p-6 sm:p-8 md:grid-cols-3">
         {[
           { state: 'done', title: 'Application received', body: `Today at ${format(new Date(), 'h:mm a')}. Nothing else you need to do.` },
-          { state: 'progress', title: 'We verify you', body: `We check you’re connected to ${venueName || 'your venue'}, usually by email.` },
-          { state: 'next', title: 'Start posting', body: 'Once you’re approved, you can post events and specials for your venue.' },
+          { state: 'progress', title: 'We verify you', body: `We check you’re connected to ${venueLabel}, usually by email.` },
+          { state: 'next', title: 'Start posting', body: 'Once you’re approved, you can post events and specials for your venues.' },
         ].map((s, i) => (
           <div key={s.title}>
             <div className="flex items-center gap-3">
@@ -159,105 +189,151 @@ function ApplicationReceived({ email, venueName }: { email: string; venueName: s
   );
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadSignupFile(body: { userId: string; kind: 'logo' | 'document'; venueIndex?: number; dataUrl: string }) {
+  const res = await fetch('/api/organizer-signup/files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.ok;
+}
+
 export default function BecomeOrganizerPage() {
   const router = useRouter();
   const { register, user } = useAuth();
   const { venues } = useEvents();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ email: string; venueName: string } | null>(null);
+  const [done, setDone] = useState<{ email: string; venueNames: string[]; uploadFailed: boolean } | null>(null);
 
   const [account, setAccount] = useState({ name: '', phone: '', email: '', password: '', confirm: '', role: 'Owner' });
-  const [claimQuery, setClaimQuery] = useState('');
-  const [claimOpen, setClaimOpen] = useState(false);
-  const [claimedVenueId, setClaimedVenueId] = useState('');
-  const [venue, setVenue] = useState({
-    name: '',
-    types: [] as string[],
-    street: '',
-    unit: '',
-    city: 'Kingston',
-    postal: '',
-    neighbourhood: 'Downtown',
-    phone: '',
-    website: '',
-    instagram: '',
-    about: '',
-  });
-  const [hours, setHours] = useState<Hours>(() =>
-    Object.fromEntries(days.map((d) => [d, { open: '11:00', close: '23:00', closed: d === 'Sun' }]))
-  );
+  const [showPassword, setShowPassword] = useState(false);
+  const [venueDrafts, setVenueDrafts] = useState<VenueDraft[]>(() => [emptyVenue()]);
   const [accessibility, setAccessibility] = useState<string[]>([]);
   const [accessibilityNotes, setAccessibilityNotes] = useState('');
   const [confirmMethod, setConfirmMethod] = useState<'email' | 'document'>('email');
+  const [verificationDoc, setVerificationDoc] = useState<{ name: string; dataUrl: string } | null>(null);
   const [notes, setNotes] = useState('');
   const [agree, setAgree] = useState(false);
-  const [newsletter, setNewsletter] = useState(true);
+  const { options: emailOptions, prefs: emailPrefs, setPref: setEmailPref } = useSignupEmailOptions('organizer');
 
   useEffect(() => {
     if (user && !done) router.push('/account');
   }, [user, done, router]);
 
-  const claimMatches = useMemo(() => {
-    const q = claimQuery.toLowerCase().trim();
-    if (!q) return venues.slice(0, 6);
-    return venues.filter((v) => v.name.toLowerCase().includes(q) || v.address.toLowerCase().includes(q)).slice(0, 6);
-  }, [venues, claimQuery]);
+  if (done) return <ApplicationReceived email={done.email} venueNames={done.venueNames} uploadFailed={done.uploadFailed} />;
 
-  const claimedVenue = venues.find((v) => v.id === claimedVenueId);
+  const showError = (msg: string) => {
+    setError(msg);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-  if (done) return <ApplicationReceived email={done.email} venueName={done.venueName} />;
+  const updateDraft = (key: number, d: VenueDraft) => setVenueDrafts((prev) => prev.map((v) => (v.key === key ? d : v)));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     const pw = account.password;
-    if (pw.length < 8 || !/\d/.test(pw) || !/[A-Z]/.test(pw)) {
-      setError('Password needs at least 8 characters, a number and an uppercase letter.');
+    if (pw.length < 10) {
+      showError('Your password needs at least 10 characters.');
       return;
     }
     if (pw !== account.confirm) {
-      setError('Passwords don’t match.');
+      showError('Passwords don’t match.');
       return;
     }
-    const venueName = claimedVenue?.name || venue.name.trim();
-    if (!venueName) {
-      setError('Pick your venue or add a new one.');
+    const filled = venueDrafts.filter((v) => v.claimedVenueId || v.name.trim());
+    if (filled.length === 0) {
+      showError('Pick your venue or add a new one.');
+      return;
+    }
+    if (filled.some((v) => !v.claimedVenueId && !v.street.trim())) {
+      showError('Add a street address for each new venue.');
+      return;
+    }
+    if (filled.some((v) => v.types.includes('Other') && !v.otherType.trim())) {
+      showError('Type your venue type under “Other”.');
+      return;
+    }
+    if (confirmMethod === 'document' && !verificationDoc) {
+      showError('Upload a document that shows you’re connected to the venue.');
       return;
     }
     if (!agree) {
-      setError('Please agree to the Terms and Listing guidelines.');
+      showError('Please agree to the Terms of Service and Privacy Policy to continue.');
       return;
     }
 
+    const applicationVenues: OrganizerVenueApplication[] = filled.map(draftToApplication);
+    const application: OrganizerApplication = {
+      phone: account.phone,
+      role: account.role,
+      venues: applicationVenues,
+      accessibility,
+      accessibilityNotes,
+      confirmMethod,
+      notes,
+      agreedToTerms: true,
+      newsletter: emailPrefs.venueTips ?? false,
+      submittedAt: new Date().toISOString(),
+    };
+    const venueNames = applicationVenues.map((v) => v.name);
+
     setSubmitting(true);
-    const result = await register({
-      name: account.name,
-      email: account.email,
-      password: pw,
-      role: 'organizer',
-      venueName,
-      organizerApplication: {
-        phone: account.phone,
-        role: account.role,
-        claimedVenueId: claimedVenue?.id,
-        venue: claimedVenue ? undefined : { ...venue, hours },
-        accessibility,
-        accessibilityNotes,
-        confirmMethod,
-        notes,
-        newsletter,
-        submittedAt: new Date().toISOString(),
-      },
-    });
-    setSubmitting(false);
-    if (result.success) {
-      setDone({ email: account.email, venueName });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      setError(result.error || 'Could not create your account. Please try again.');
+    let result: Awaited<ReturnType<typeof register>>;
+    try {
+      result = await register({
+        name: account.name,
+        email: account.email,
+        password: pw,
+        role: 'organizer',
+        venueName: venueNames[0],
+        organizerApplication: application as unknown as Record<string, unknown>,
+        emailPreferences: emailPrefs,
+      });
+    } catch (err) {
+      console.error('[Organizer sign-up] Register threw:', err);
+      result = { success: false, error: err instanceof Error ? err.message : undefined };
     }
+
+    if (!result.success) {
+      setSubmitting(false);
+      showError(result.error || 'We couldn’t create your account. Please check your details and try again.');
+      return;
+    }
+
+    // Attach files one at a time (each upload updates the same application)
+    let uploadFailed = false;
+    if (result.userId) {
+      const userId = result.userId;
+      try {
+        for (let i = 0; i < filled.length; i++) {
+          if (filled[i].logo && !(await uploadSignupFile({ userId, kind: 'logo', venueIndex: i, dataUrl: filled[i].logo }))) uploadFailed = true;
+        }
+        if (confirmMethod === 'document' && verificationDoc && !(await uploadSignupFile({ userId, kind: 'document', dataUrl: verificationDoc.dataUrl }))) {
+          uploadFailed = true;
+        }
+      } catch {
+        uploadFailed = true;
+      }
+      if (uploadFailed) console.error('[Organizer sign-up] Some files could not be uploaded');
+    }
+
+    setSubmitting(false);
+    setDone({ email: account.email, venueNames, uploadFailed });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  const takenIds = venueDrafts.map((v) => v.claimedVenueId).filter(Boolean);
 
   return (
     <div className="page-container pb-24 pt-10">
@@ -268,16 +344,11 @@ export default function BecomeOrganizerPage() {
         organizer
       </h1>
 
-      {error && (
-        <div className="mt-8 flex items-start gap-3 rounded-[14px] bg-danger-tint p-4 text-[14px] text-danger">
-          <AlertCircle size={18} className="mt-0.5 shrink-0" />
-          <p>{error}</p>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} className="mt-8" />}
 
       <form onSubmit={handleSubmit} className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-[1fr_360px]">
         <div className="flex min-w-0 flex-col gap-4">
-          <Section number={1} title="Your account" hint="You’ll use this to sign in and post listings." aside={<span className="text-[12px] font-normal text-coral">* required</span>}>
+          <Section number={1} title="Your account" hint="You’ll use this to sign in and post listings.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Full name" id="org-name">
                 <input id="org-name" required value={account.name} onChange={(e) => setAccount({ ...account, name: e.target.value })} placeholder="John Doe" className="field" />
@@ -291,18 +362,25 @@ export default function BecomeOrganizerPage() {
             </Field>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Password" id="org-password">
-                <input
+                <PasswordInput
                   id="org-password"
-                  type="password"
-                  required
+                  minLength={10}
                   value={account.password}
-                  onChange={(e) => setAccount({ ...account, password: e.target.value })}
-                  placeholder="8+ characters, a number & a capital"
-                  className="field"
+                  onChange={(password) => setAccount({ ...account, password })}
+                  placeholder="At least 10 characters"
+                  shown={showPassword}
+                  onToggle={() => setShowPassword(!showPassword)}
                 />
               </Field>
               <Field label="Confirm password" id="org-confirm">
-                <input id="org-confirm" type="password" required value={account.confirm} onChange={(e) => setAccount({ ...account, confirm: e.target.value })} placeholder="Type it again" className="field" />
+                <PasswordInput
+                  id="org-confirm"
+                  value={account.confirm}
+                  onChange={(confirm) => setAccount({ ...account, confirm })}
+                  placeholder="Type it again"
+                  shown={showPassword}
+                  onToggle={() => setShowPassword(!showPassword)}
+                />
               </Field>
             </div>
             <div>
@@ -317,159 +395,25 @@ export default function BecomeOrganizerPage() {
             </div>
           </Section>
 
-          <Section number={2} title="Your venue" hint="Add the place you post for. You’ll only type this once.">
-            <Field label="Is your venue already on Kingston Happenings?" hint="Claiming links your account to its existing page.">
-              <div className="relative">
-                <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-link" />
-                <input
-                  value={claimedVenue ? claimedVenue.name : claimQuery}
-                  onChange={(e) => {
-                    setClaimedVenueId('');
-                    setClaimQuery(e.target.value);
-                    setClaimOpen(true);
-                  }}
-                  onFocus={() => setClaimOpen(true)}
-                  onBlur={() => setTimeout(() => setClaimOpen(false), 150)}
-                  placeholder="Search venues to claim it…"
-                  className="field field-with-icon pr-10"
-                />
-                <ChevronDown size={16} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-navy" />
-                {claimOpen && claimMatches.length > 0 && !claimedVenue && (
-                  <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-[14px] border border-line bg-white py-1 shadow-lg">
-                    {claimMatches.map((v) => (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          setClaimedVenueId(v.id);
-                          setClaimOpen(false);
-                        }}
-                        className="block w-full px-4 py-2.5 text-left hover:bg-sky-soft"
-                      >
-                        <span className="block text-[14px] font-bold text-navy">{v.name}</span>
-                        <span className="block text-[12px] text-ink-muted">{v.address}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {claimedVenue && (
-                <button type="button" onClick={() => setClaimedVenueId('')} className="mt-2 text-[12px] font-medium text-link hover:underline">
-                  Not this one? Clear
-                </button>
-              )}
-            </Field>
-
-            {!claimedVenue && (
-              <>
-                <div className="flex items-center gap-3 text-[12px] font-medium uppercase tracking-[0.12em] text-ink-muted">
-                  <span className="h-px flex-1 bg-line" />
-                  or add a new venue
-                  <span className="h-px flex-1 bg-line" />
-                </div>
-                <Field label="Venue name" id="venue-name">
-                  <input id="venue-name" value={venue.name} onChange={(e) => setVenue({ ...venue, name: e.target.value })} placeholder="Merchant Tap House" className="field" />
-                </Field>
-                <div>
-                  <p className="field-label mb-1">Venue type</p>
-                  <p className="field-hint mb-3">Pick all that apply.</p>
-                  <MultiChips options={venueTypes} value={venue.types} onChange={(types) => setVenue({ ...venue, types })} />
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
-                  <Field label="Street address" id="venue-street">
-                    <input id="venue-street" value={venue.street} onChange={(e) => setVenue({ ...venue, street: e.target.value })} placeholder="123 Princess St." className="field" />
-                  </Field>
-                  <Field label="Unit / floor (optional)" id="venue-unit">
-                    <input id="venue-unit" value={venue.unit} onChange={(e) => setVenue({ ...venue, unit: e.target.value })} placeholder="Second Floor" className="field" />
-                  </Field>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <Field label="City" id="venue-city">
-                    <input id="venue-city" value={venue.city} onChange={(e) => setVenue({ ...venue, city: e.target.value })} className="field" />
-                  </Field>
-                  <Field label="Postal code" id="venue-postal">
-                    <input id="venue-postal" value={venue.postal} onChange={(e) => setVenue({ ...venue, postal: e.target.value })} placeholder="K7L 1A1" className="field" />
-                  </Field>
-                  <Field label="Neighbourhood" id="venue-hood">
-                    <select id="venue-hood" value={venue.neighbourhood} onChange={(e) => setVenue({ ...venue, neighbourhood: e.target.value })} className="field">
-                      {neighbourhoods.map((n) => (
-                        <option key={n}>{n}</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Venue phone" id="venue-phone">
-                    <input id="venue-phone" type="tel" value={venue.phone} onChange={(e) => setVenue({ ...venue, phone: e.target.value })} placeholder="123-456-7890" className="field" />
-                  </Field>
-                  <Field label="Website" id="venue-website">
-                    <input id="venue-website" value={venue.website} onChange={(e) => setVenue({ ...venue, website: e.target.value })} placeholder="website.com" className="field" />
-                  </Field>
-                </div>
-                <Field label="Instagram (optional)" id="venue-ig">
-                  <div className="relative">
-                    <AtSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-link" />
-                    <input id="venue-ig" value={venue.instagram} onChange={(e) => setVenue({ ...venue, instagram: e.target.value })} placeholder="instagramaccount" className="field field-with-icon" />
-                  </div>
-                </Field>
-                <Field label="About the venue" id="venue-about">
-                  <textarea
-                    id="venue-about"
-                    rows={3}
-                    value={venue.about}
-                    onChange={(e) => setVenue({ ...venue, about: e.target.value })}
-                    placeholder="A sentence or two about what it’s like."
-                    className="field"
-                  />
-                </Field>
-                <div>
-                  <p className="field-label">Opening hours</p>
-                  <div className="overflow-hidden rounded-[14px] border border-line">
-                    {days.map((d) => {
-                      const h = hours[d];
-                      return (
-                        <div key={d} className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
-                          <span className="w-10 text-[14px] font-medium text-navy">{d}</span>
-                          <input
-                            type="time"
-                            disabled={h.closed}
-                            value={h.open}
-                            onChange={(e) => setHours({ ...hours, [d]: { ...h, open: e.target.value } })}
-                            className="h-9 rounded-[10px] border border-line px-3 text-[13px] text-navy disabled:opacity-40"
-                            aria-label={`${d} opening time`}
-                          />
-                          <span className="text-[13px] text-ink-muted">to</span>
-                          <input
-                            type="time"
-                            disabled={h.closed}
-                            value={h.close}
-                            onChange={(e) => setHours({ ...hours, [d]: { ...h, close: e.target.value } })}
-                            className="h-9 rounded-[10px] border border-line px-3 text-[13px] text-navy disabled:opacity-40"
-                            aria-label={`${d} closing time`}
-                          />
-                          <span className="ml-auto flex items-center gap-2 text-[13px] text-navy">
-                            <button
-                              type="button"
-                              className="switch"
-                              data-on={h.closed}
-                              onClick={() => setHours({ ...hours, [d]: { ...h, closed: !h.closed } })}
-                              aria-label={`${d} closed`}
-                            >
-                              <span />
-                            </button>
-                            Closed
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
+          <Section number={2} title="Your venue" hint="Add the places you post for. You’ll only type this once and it fills in automatically when you submit events or specials.">
+            {venueDrafts.map((draft, i) => (
+              <VenueFields
+                key={draft.key}
+                draft={draft}
+                index={i}
+                venues={venues}
+                takenIds={takenIds.filter((id) => id !== draft.claimedVenueId)}
+                onChange={(d) => updateDraft(draft.key, d)}
+                onRemove={i > 0 ? () => setVenueDrafts((prev) => prev.filter((v) => v.key !== draft.key)) : undefined}
+                onLogoError={showError}
+              />
+            ))}
+            <button type="button" onClick={() => setVenueDrafts((prev) => [...prev, emptyVenue()])} className="self-start text-[14px] font-medium text-link hover:underline">
+              + Add another venue
+            </button>
           </Section>
 
-          <Section number={3} title="Accessibility" hint="Help people know what to expect before they arrive.">
+          <Section number={3} title="Accessibility" hint="Help people know what to expect before they arrive. This shows on your venue page and on every listing you post.">
             <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
               {accessibilityOptions.map((o) => (
                 <Checkbox
@@ -501,19 +445,55 @@ export default function BecomeOrganizerPage() {
                   Use my work email
                 </button>
                 <button type="button" className="chip h-10" data-active={confirmMethod === 'document'} onClick={() => setConfirmMethod('document')}>
-                  Send a document by email
+                  Upload a document
                 </button>
               </div>
+              {confirmMethod === 'document' && (
+                <div className="mt-4">
+                  <Dropzone
+                    accept="application/pdf,image/png,image/jpeg"
+                    title="Drag a document here, or click to upload"
+                    hint="A business licence, utility bill or letterhead with your name · PDF, JPG or PNG · max 3 MB"
+                    fileLabel={verificationDoc?.name}
+                    onSelect={async (file) => {
+                      if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type)) return showError('Your document needs to be a PDF, JPG or PNG.');
+                      if (file.size > MAX_DOCUMENT_BYTES) return showError('Your document needs to be 3 MB or smaller.');
+                      setVerificationDoc({ name: file.name, dataUrl: await readFileAsDataUrl(file) });
+                    }}
+                    onRemove={() => setVerificationDoc(null)}
+                  />
+                </div>
+              )}
             </div>
             <Field label="Anything else we should know? (optional)" id="org-notes">
               <textarea id="org-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g., I book the bands for both of our locations." className="field" />
             </Field>
             <div className="flex flex-col gap-3">
-              <Checkbox checked={agree} onChange={setAgree} label="I agree to the Terms and Listing guidelines" />
-              <Checkbox checked={newsletter} onChange={setNewsletter} label="Email me tips and news for venues (recommended)" />
+              <Checkbox
+                checked={agree}
+                onChange={setAgree}
+                label={
+                  <span>
+                    I agree to the{' '}
+                    <Link href="/terms" target="_blank" className="font-bold text-link hover:underline" onClick={(e) => e.stopPropagation()}>
+                      Terms of Service
+                    </Link>{' '}
+                    and{' '}
+                    <Link href="/privacy" target="_blank" className="font-bold text-link hover:underline" onClick={(e) => e.stopPropagation()}>
+                      Privacy Policy
+                    </Link>
+                    .
+                  </span>
+                }
+              />
+              {emailOptions.map((o) => (
+                <Checkbox key={o.key} checked={!!emailPrefs[o.key]} onChange={(v) => setEmailPref(o.key, v)} label={`Email me: ${o.label}`} />
+              ))}
             </div>
           </Section>
 
+          {/* Repeated by the button, since that's where people are looking when they submit */}
+          {error && <ErrorBanner message={error} className="mt-2" />}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
             <p className="text-[14px] text-ink-muted">
               Already have an account?{' '}
@@ -521,7 +501,7 @@ export default function BecomeOrganizerPage() {
                 Sign in
               </Link>
             </p>
-            <button type="submit" disabled={submitting} className="btn-sun h-[52px] px-7 text-[15px]">
+            <button type="submit" disabled={submitting || !agree} className="btn-sun h-[52px] px-7 text-[15px] disabled:cursor-not-allowed disabled:opacity-50">
               {submitting ? <Loader2 size={18} className="animate-spin" /> : 'Create organizer account →'}
             </button>
           </div>
@@ -532,9 +512,9 @@ export default function BecomeOrganizerPage() {
             <p className="text-[18px] font-bold text-navy">How organizer accounts work</p>
             <ol className="mt-4 flex flex-col gap-4">
               {[
-                ['Create your account', 'Add yourself and your venue once.'],
-                ['We confirm you', 'Every new organizer is checked by our team — usually 1–2 business days.'],
-                ['Post events & specials', 'Pick your venue when you submit. Listings are reviewed before they go live.'],
+                ['Create your account', 'Add yourself and your venues once.'],
+                ['We confirm you', 'Every new organizer is checked by our admin team, usually 1–2 business days.'],
+                ['Post events & specials', 'Pick your venue and its details fill in automatically. Listings are reviewed before they go live.'],
               ].map(([t, d], i) => (
                 <li key={t} className="flex gap-3">
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky text-[13px] font-bold text-navy">{i + 1}</span>
@@ -548,19 +528,18 @@ export default function BecomeOrganizerPage() {
           </div>
           <div className="rounded-[22px] bg-navy p-6 text-white">
             <span className="tag bg-sun text-navy gap-1">
-              <Check size={12} strokeWidth={3} /> Approved organizer
+              <Check size={12} strokeWidth={3} /> Verified organizer
             </span>
             <p className="mt-4 text-[18px] font-bold">Skip the wait</p>
             <p className="mt-2 text-[13px] leading-[1.5] text-on-dark-muted">
-              After a few accurate listings, our team can make you an Approved organizer. Your events and specials then go live
-              straight away — no review needed.
+              Request to become a Verified Organizer once your account is approved. Auto-publish your events and specials, without
+              admin approval.
             </p>
           </div>
           <div className="rounded-[22px] bg-sky p-6">
             <p className="text-[18px] font-bold text-navy">Run more than one place?</p>
             <p className="mt-2 text-[13px] leading-[1.5] text-ink-muted">
-              Mention every venue you manage in the notes. When you post, just pick which one — and keep an eye on all your listings
-              from My Events.
+              Add every venue you manage. When you post, just pick which one, and keep an eye on all your listings from My Events.
             </p>
           </div>
         </aside>
