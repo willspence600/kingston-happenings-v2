@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Clock, Loader2, MapPin, Star } from 'lucide-react';
-import { addDays, format, parseISO } from 'date-fns';
+import { addDays, format, isSameMonth, parseISO } from 'date-fns';
 import { useEvents } from '@/contexts/EventsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Event, EventCategory } from '@/types/event';
@@ -48,15 +48,48 @@ function timeRange(event: Event) {
   return event.endTime ? `${formatTime(event.startTime)} – ${formatTime(event.endTime)}` : formatTime(event.startTime);
 }
 
-function BigDateRow({ event, saved, onSave }: { event: Event; saved: boolean; onSave: () => void }) {
-  const d = parseISO(event.date);
+// A big date, collapsed across every listed date of the same event (series, or same title at the same venue)
+type BigDate = { event: Event; endDate?: string };
+
+function dateRangeLabel(start: string, end: string, withWeekday = false) {
+  const s = parseISO(start);
+  const e = parseISO(end);
+  const fmt = withWeekday ? 'EEE, MMM d' : 'MMM d';
+  if (!withWeekday && isSameMonth(s, e)) return `${format(s, 'MMM d')} – ${format(e, 'd')}`;
+  return `${format(s, fmt)} – ${format(e, fmt)}`;
+}
+
+function DateTile({ start, end }: { start: string; end?: string }) {
+  const s = parseISO(start);
+  if (!end) {
+    return (
+      <>
+        <span className="text-[36px] sm:text-[44px] font-bold leading-none tracking-[-0.04em]">{format(s, 'd')}</span>
+        <span className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink-muted">{format(s, 'EEE')}</span>
+      </>
+    );
+  }
+  const e = parseISO(end);
+  return (
+    <>
+      <span className="text-[22px] sm:text-[26px] font-bold leading-none tracking-[-0.04em]">
+        {format(s, 'd')}–{format(e, 'd')}
+      </span>
+      <span className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-muted">
+        {isSameMonth(s, e) ? format(s, 'MMM') : `${format(s, 'MMM')}–${format(e, 'MMM')}`}
+      </span>
+    </>
+  );
+}
+
+function BigDateRow({ item, saved, onSave }: { item: BigDate; saved: boolean; onSave: () => void }) {
+  const { event, endDate } = item;
   const cat = primaryCategory(event);
   return (
     <div className="card group relative flex items-center gap-4 p-4 sm:gap-6 hover:border-navy/30">
       <Link href={`/events/${event.id}`} className="absolute inset-0 rounded-[22px]" aria-label={event.title} />
       <div className="flex h-[80px] w-[72px] sm:h-[96px] sm:w-[88px] shrink-0 flex-col items-center justify-center rounded-[16px] bg-sky text-navy pointer-events-none">
-        <span className="text-[36px] sm:text-[44px] font-bold leading-none tracking-[-0.04em]">{format(d, 'd')}</span>
-        <span className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink-muted">{format(d, 'EEE')}</span>
+        <DateTile start={event.date} end={endDate} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col items-start gap-2 pointer-events-none">
         {cat ? <CategoryTag category={cat} /> : isDowntown(event.venue) && <DowntownTag />}
@@ -73,15 +106,15 @@ function BigDateRow({ event, saved, onSave }: { event: Event; saved: boolean; on
             {timeRange(event)}
           </span>
         </div>
-        <p className="line-clamp-1 text-[14px] leading-[1.45] text-navy">{event.description}</p>
+        <p className="line-clamp-1 text-[14px] leading-[1.45] text-navy">{event.summary || event.description}</p>
       </div>
       <SaveButton saved={saved} onClick={onSave} variant="circle" size={18} className="relative z-10" />
     </div>
   );
 }
 
-function FeaturedBigDate({ event }: { event: Event }) {
-  const d = parseISO(event.date);
+function FeaturedBigDate({ item }: { item: BigDate }) {
+  const { event, endDate } = item;
   return (
     <div className="relative flex flex-col items-start gap-3.5 rounded-[28px] border-2 border-sun bg-navy p-6 sm:p-8 shadow-[0_0_32px_0_rgba(255,181,71,0.35)]">
       <div>
@@ -91,13 +124,13 @@ function FeaturedBigDate({ event }: { event: Event }) {
         </span>
       </div>
       <p className="eyebrow-bold text-sun">
-        {format(d, 'EEE, MMM d')}
+        {endDate ? dateRangeLabel(event.date, endDate, true) : format(parseISO(event.date), 'EEE, MMM d')}
         {!isAllDayEvent(event) && ` · ${formatTimeShort(event.startTime)}`}
       </p>
       <p className="max-w-[520px] text-[34px] sm:text-[44px] font-bold leading-none tracking-[-0.04em] text-white">
         {event.title}
       </p>
-      <p className="text-[16px] leading-[1.5] text-on-dark-muted line-clamp-3">{event.description}</p>
+      <p className="text-[16px] leading-[1.5] text-on-dark-muted line-clamp-3">{event.summary || event.description}</p>
       <div className="flex w-full flex-wrap items-center justify-between gap-4 pt-1.5">
         {isDowntown(event.venue) ? (
           <DowntownTag />
@@ -134,20 +167,28 @@ export default function ComingUpPage() {
         if (filter === 'downtown') return isDowntown(e.venue);
         return e.categories.some((c) => active?.categories?.includes(c));
       })
-      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+      // Collapse an event listed on several dates into one entry spanning its first to last date
+      .reduce<BigDate[]>((acc, e) => {
+        const key = (x: Event) => x.seriesId || `${x.title.trim().toLowerCase()}|${x.venue?.id}`;
+        const existing = acc.find((b) => key(b.event) === key(e));
+        if (existing) existing.endDate = e.date === existing.event.date ? existing.endDate : e.date;
+        else acc.push({ event: e });
+        return acc;
+      }, []);
   }, [upcoming, filter]);
 
   // A single featured slot: the soonest big date from a Featured-tier Major Venue
-  const featured = bigDates.find((e) => listingTier(e) === 'featured');
+  const featured = bigDates.find((b) => listingTier(b.event) === 'featured');
 
   const byMonth = useMemo(() => {
-    const map = new Map<string, Event[]>();
+    const map = new Map<string, BigDate[]>();
     bigDates
-      .filter((e) => e.id !== featured?.id)
-      .forEach((e) => {
-        const key = e.date.slice(0, 7);
+      .filter((b) => b !== featured)
+      .forEach((b) => {
+        const key = b.event.date.slice(0, 7);
         if (!map.has(key)) map.set(key, []);
-        map.get(key)!.push(e);
+        map.get(key)!.push(b);
       });
     return [...map.entries()];
   }, [bigDates, featured]);
@@ -197,7 +238,7 @@ export default function ComingUpPage() {
 
       <div className="mt-6 flex flex-col gap-10 lg:flex-row">
         <div className="min-w-0 flex-1 flex flex-col gap-12">
-          {featured && <FeaturedBigDate event={featured} />}
+          {featured && <FeaturedBigDate item={featured} />}
 
           {byMonth.length === 0 && !featured && (
             <div className="card p-8">
@@ -217,8 +258,8 @@ export default function ComingUpPage() {
                 </h2>
               </div>
               <div className="mt-4 flex flex-col gap-4">
-                {items.map((e) => (
-                  <BigDateRow key={e.id} event={e} saved={isLiked(e.id)} onSave={() => handleSave(e.id)} />
+                {items.map((b) => (
+                  <BigDateRow key={b.event.id} item={b} saved={isLiked(b.event.id)} onSave={() => handleSave(b.event.id)} />
                 ))}
               </div>
             </section>

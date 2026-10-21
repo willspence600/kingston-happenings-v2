@@ -33,6 +33,7 @@ type CategoryRel = { name: string };
 export type EventWithRelations = {
   id: string;
   title: string;
+  summary?: string | null;
   description: string;
   date: string;
   startTime: string;
@@ -87,6 +88,7 @@ export function transformEvent(event: EventWithRelations, options?: { stripDataU
   return {
     id: event.id,
     title: event.title,
+    summary: event.summary ?? undefined,
     description: event.description,
     date: event.date,
     startTime: event.startTime,

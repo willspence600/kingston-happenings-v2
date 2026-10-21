@@ -39,10 +39,11 @@ export async function GET(
 }
 
 // Fields a PATCH may set directly on Event rows
-const EDITABLE_FIELDS = ['title', 'description', 'date', 'startTime', 'endTime', 'price', 'ticketUrl'] as const;
+const EDITABLE_FIELDS = ['title', 'summary', 'description', 'date', 'startTime', 'endTime', 'price', 'ticketUrl'] as const;
 
 const NOTICE_FIELDS: Record<string, string> = {
   title: 'Title',
+  summary: 'Short description',
   description: 'Description',
   date: 'Date',
   startTime: 'Start time',
@@ -200,7 +201,7 @@ export async function PATCH(
 
       // Update series canonical fields
       const seriesUpdate: Record<string, unknown> = {};
-      for (const key of ['title', 'description', 'startTime', 'endTime', 'price', 'ticketUrl', 'isAllDay', 'venueId', 'status', 'rejectionReason', 'hiddenFromPromotion']) {
+      for (const key of ['title', 'summary', 'description', 'startTime', 'endTime', 'price', 'ticketUrl', 'isAllDay', 'venueId', 'status', 'rejectionReason', 'hiddenFromPromotion']) {
         if (updateFields[key] !== undefined) seriesUpdate[key] = updateFields[key];
       }
       if (finalImageUrl !== undefined) seriesUpdate.imageUrl = finalImageUrl;
@@ -268,6 +269,7 @@ export async function PATCH(
           await prisma.event.create({
             data: {
               title: updatedSeries.title,
+              summary: updatedSeries.summary,
               description: updatedSeries.description,
               date,
               startTime: updatedSeries.startTime,

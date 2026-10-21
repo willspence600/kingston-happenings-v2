@@ -28,6 +28,7 @@ import { useEvents } from '@/contexts/EventsContext';
 import { DatePicker, VenueSelector } from '@/components';
 import { compressImage } from '@/utils/compression';
 import { getRecurrenceLabel } from '@/utils/recurrenceLabel';
+import { splitDescription } from '@/components/admin/ListingEditor';
 
 const normalizeUrl = (url: string): string => {
   if (!url) return '';
@@ -40,7 +41,8 @@ const normalizeUrl = (url: string): string => {
 type PriceType = 'na' | 'free' | 'amount';
 type EditScope = 'this' | 'future';
 
-const MAX_DESCRIPTION_LENGTH = 500;
+const MAX_SUMMARY_LENGTH = 150;
+const MAX_DESCRIPTION_LENGTH = 600;
 
 export default function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -96,6 +98,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const isRecurring = Boolean(event?.isRecurring && event?.seriesId);
 
   const [title, setTitle] = useState('');
+  const [summary, setSummary] = useState('');
   const [description, setDescription] = useState('');
   const [date, setDate] = useState('');
   const [startTime, setStartTime] = useState('');
@@ -125,7 +128,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   useEffect(() => {
     if (event && !initialized) {
       setTitle(event.title);
-      setDescription(event.description);
+      const split = splitDescription(event);
+      setSummary(isFoodDeal ? event.summary || '' : split.summary);
+      setDescription(isFoodDeal ? event.description : split.description);
       setDate(event.date);
       setStartTime(event.startTime);
       setEndTime(event.endTime || '');
@@ -224,6 +229,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
       const body: Record<string, unknown> = {
         title,
+        ...(isFoodDeal ? {} : { summary: summary.trim() || null }),
         description,
         date,
         startTime: isAllDay ? '00:00' : startTime,
@@ -474,12 +480,32 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   className="field"
                 />
               </div>
+              {!isFoodDeal && (
+                <div>
+                  <label htmlFor="summary" className="field-label">Short description *</label>
+                  <textarea
+                    id="summary"
+                    required
+                    rows={2}
+                    maxLength={MAX_SUMMARY_LENGTH}
+                    value={summary}
+                    onChange={(e) => setSummary(e.target.value)}
+                    className="field"
+                  />
+                  <div className="flex justify-between gap-4 mt-1">
+                    <span className="field-hint">Shows on event cards and previews.</span>
+                    <span className={`text-xs ${summary.length > MAX_SUMMARY_LENGTH * 0.9 ? 'text-amber-500' : 'text-muted-foreground'}`}>
+                      {summary.length}/{MAX_SUMMARY_LENGTH}
+                    </span>
+                  </div>
+                </div>
+              )}
               <div>
                 <label htmlFor="description" className="field-label">Description *</label>
                 <textarea
                   id="description"
                   required
-                  rows={4}
+                  rows={6}
                   maxLength={MAX_DESCRIPTION_LENGTH}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}

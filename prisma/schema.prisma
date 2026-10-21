@@ -48,6 +48,7 @@ model Venue {
 model EventSeries {
   id                String   @id @default(cuid())
   title             String
+  summary           String? // Short description for cards and previews
   description       String
   startTime         String
   endTime           String?
@@ -83,6 +84,7 @@ model EventSeriesCategory {
 model Event {
   id          String  @id @default(cuid())
   title       String
+  summary     String? // Short description for cards and previews
   description String
   date        String // YYYY-MM-DD format
   startTime   String // HH:MM format

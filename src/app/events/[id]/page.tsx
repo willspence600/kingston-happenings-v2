@@ -99,7 +99,7 @@ function SpecialMiniRow({ event, saved, onSave, extra }: { event: Event; saved: 
           {event.venue.neighborhood ? ` · ${event.venue.neighborhood}` : ''}
           {extra ? ` · ${extra}` : ''}
         </span>
-        <span className="line-clamp-1 text-[13px] text-ink-muted">{event.description}</span>
+        <span className="line-clamp-1 text-[13px] text-ink-muted">{event.summary || event.description}</span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1 text-right pointer-events-none">
         {isOnNow(event) && (
@@ -356,7 +356,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         {/* Main column */}
         <div className="min-w-0">
           <p className="eyebrow-sm">About this {isFoodDeal ? 'special' : 'event'}</p>
-          <p className="mt-3 whitespace-pre-line text-[17px] leading-[1.6] text-navy">{event.description}</p>
+          <p className="mt-3 whitespace-pre-line text-[17px] leading-[1.6] text-navy">{event.description || event.summary}</p>
           {event.lastEditedAt && (
             <p className="mt-3 text-[13px] text-ink-muted">Edited {format(new Date(event.lastEditedAt), 'MMM d, yyyy')}</p>
           )}

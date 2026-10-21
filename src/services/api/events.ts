@@ -10,6 +10,7 @@ import type { Event, Venue, EventCategory } from '@/types/event';
  */
 export interface EventSubmission {
   title: string;
+  summary?: string;
   description: string;
   date: string;
   startTime: string;

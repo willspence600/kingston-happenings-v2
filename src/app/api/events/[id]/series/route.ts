@@ -91,6 +91,7 @@ export async function PATCH(
       await prisma.event.create({
         data: {
           title: series.title,
+          summary: series.summary,
           description: series.description,
           date,
           startTime: series.startTime,

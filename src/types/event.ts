@@ -86,6 +86,8 @@ export type VenueHours = Record<string, { open: string; close: string; closed: b
 export interface Event {
   id: string;
   title: string;
+  /** Short description shown on cards and previews */
+  summary?: string;
   description: string;
   date: string; // ISO date string (YYYY-MM-DD)
   startTime: string; // HH:mm format

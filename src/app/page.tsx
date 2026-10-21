@@ -44,7 +44,7 @@ function FeatureCard({ event }: { event: Event }) {
       <div className="flex flex-col gap-2">
         <p className="eyebrow-bold text-sun">{kicker}</p>
         <p className="text-[26px] sm:text-[30px] font-bold leading-[1.1] tracking-[-0.02em] text-white">{event.title}</p>
-        <p className="text-[14px] leading-[1.45] text-on-dark-muted line-clamp-3">{event.description}</p>
+        <p className="text-[14px] leading-[1.45] text-on-dark-muted line-clamp-3">{event.summary || event.description}</p>
       </div>
       <div className="flex flex-wrap gap-x-7 gap-y-3 border-t border-white pt-4 uppercase">
         <div className="flex flex-col gap-0.5">
