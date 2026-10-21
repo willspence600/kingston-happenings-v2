@@ -73,7 +73,7 @@ function BigDateRow({ event, saved, onSave }: { event: Event; saved: boolean; on
             {timeRange(event)}
           </span>
         </div>
-        <p className="line-clamp-1 text-[14px] leading-[1.45] text-navy">{event.description}</p>
+        <p className="line-clamp-1 text-[14px] leading-[1.45] text-navy">{event.summary || event.description}</p>
       </div>
       <SaveButton saved={saved} onClick={onSave} variant="circle" size={18} className="relative z-10" />
     </div>
@@ -97,7 +97,7 @@ function FeaturedBigDate({ event }: { event: Event }) {
       <p className="max-w-[520px] text-[34px] sm:text-[44px] font-bold leading-none tracking-[-0.04em] text-white">
         {event.title}
       </p>
-      <p className="text-[16px] leading-[1.5] text-on-dark-muted line-clamp-3">{event.description}</p>
+      <p className="text-[16px] leading-[1.5] text-on-dark-muted line-clamp-3">{event.summary || event.description}</p>
       <div className="flex w-full flex-wrap items-center justify-between gap-4 pt-1.5">
         {isDowntown(event.venue) ? (
           <DowntownTag />

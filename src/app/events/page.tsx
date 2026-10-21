@@ -92,6 +92,7 @@ function matchesQuery(event: Event, query: string) {
   return (
     event.title.toLowerCase().includes(q) ||
     event.description.toLowerCase().includes(q) ||
+    event.summary?.toLowerCase().includes(q) ||
     event.venue.name.toLowerCase().includes(q)
   );
 }
@@ -273,7 +274,7 @@ function DetailedEventRow({
             {cat ? categoryLabels[cat] : 'Event'} · {event.venue.name}
           </span>
         </span>
-        <span className="truncate text-[14px] text-ink-muted">{event.description}</span>
+        <span className="truncate text-[14px] text-ink-muted">{event.summary || event.description}</span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1 text-right font-medium pointer-events-none sm:w-[130px]">
         <span className={`text-[14px] ${price === 'Free' ? 'text-link' : 'text-navy'}`}>{price}</span>
@@ -317,7 +318,7 @@ function SpecialListRow({ event, saved, onSave }: { event: Event; saved: boolean
       <span className="flex min-w-0 flex-1 flex-col gap-[5px] pointer-events-none">
         <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
         <span className="truncate text-[13px] text-ink-subtle">{event.venue.name}</span>
-        <span className="truncate text-[14px] text-ink-muted">{event.description}</span>
+        <span className="truncate text-[14px] text-ink-muted">{event.summary || event.description}</span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1.5 text-right pointer-events-none sm:w-[130px]">
         {onNow && (

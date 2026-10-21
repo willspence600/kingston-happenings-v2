@@ -56,7 +56,9 @@ const LIMITS = {
   eventTitle: 40,
   specialName: 30,
   deal: 30,
-  description: 250,
+  summary: 150,
+  description: 600,
+  specialDescription: 250,
 };
 
 const VERIFICATION_EMAIL = 'kingstonhappenings.ca@gmail.com';
@@ -79,6 +81,7 @@ interface VenueFields {
 interface EventFormData extends VenueFields {
   id: string;
   title: string;
+  summary: string;
   description: string;
   date: string;
   startTime: string;
@@ -129,6 +132,7 @@ const createEmptyForm = (venueId = ''): EventFormData => ({
   ...emptyVenueFields(venueId),
   id: generateId(),
   title: '',
+  summary: '',
   description: '',
   date: '',
   startTime: '',
@@ -820,6 +824,7 @@ function SubmitContent() {
 
           const base = {
             title: form.title.trim(),
+            summary: form.summary.trim(),
             description: form.description.trim(),
             startTime: form.isAllDay ? '00:00' : form.startTime,
             endTime: form.isAllDay ? undefined : form.endTime || undefined,
@@ -1274,20 +1279,40 @@ function SubmitContent() {
                         <Helper length={formData.title.length} max={LIMITS.eventTitle} />
                       </div>
                       <div>
+                        <label htmlFor={`summary-${formData.id}`} className="field-label">
+                          Short description
+                        </label>
+                        <textarea
+                          id={`summary-${formData.id}`}
+                          required
+                          rows={2}
+                          maxLength={LIMITS.summary}
+                          value={formData.summary}
+                          onChange={(e) => updateForm(formData.id, { summary: e.target.value })}
+                          placeholder="e.g., Teams of up to six, prizes for the top three, half-price nachos"
+                          className="field"
+                        />
+                        <Helper
+                          hint="Shows on event cards and previews."
+                          length={formData.summary.length}
+                          max={LIMITS.summary}
+                        />
+                      </div>
+                      <div>
                         <label htmlFor={`description-${formData.id}`} className="field-label">
                           Description
                         </label>
                         <textarea
                           id={`description-${formData.id}`}
                           required
-                          rows={4}
+                          rows={6}
                           maxLength={LIMITS.description}
                           value={formData.description}
                           onChange={(e) => updateForm(formData.id, { description: e.target.value })}
                           placeholder="Tell people what they can expect at your event..."
                           className="field"
                         />
-                        <Helper length={formData.description.length} max={LIMITS.description} />
+                        <Helper hint="Shows on the event’s details page." length={formData.description.length} max={LIMITS.description} />
                       </div>
                     </Section>
 
@@ -1663,13 +1688,13 @@ function SubmitContent() {
                       <textarea
                         id={`special-description-${formData.id}`}
                         rows={3}
-                        maxLength={LIMITS.description}
+                        maxLength={LIMITS.specialDescription}
                         value={formData.description}
                         onChange={(e) => updateSpecialForm(formData.id, { description: e.target.value })}
                         placeholder="Anything else people should know - what’s included, how to order etc."
                         className="field"
                       />
-                      <Helper length={formData.description.length} max={LIMITS.description} />
+                      <Helper length={formData.description.length} max={LIMITS.specialDescription} />
                     </div>
                     <div>
                       <p className="field-label">Type</p>

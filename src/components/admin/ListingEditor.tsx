@@ -28,8 +28,11 @@ const SPECIAL_TYPES: { id: SpecialType; label: string }[] = [
 const EVENT_DETAIL_FLAGS: EventCategory[] = ['sold-out', 'rsvp'];
 // Monday-first for the day picker
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
-// Submit limits the short summary to 90 characters; it leads the description
-const SUMMARY_MAX = 90;
+// Match the Submit form's limits
+const SUMMARY_MAX = 150;
+const DESCRIPTION_MAX = 600;
+// Older listings stored a summary of up to 90 characters as the description's first paragraph
+const LEGACY_SUMMARY_MAX = 90;
 
 export interface ListingDraft {
   title: string;
@@ -51,17 +54,19 @@ export interface ListingDraft {
 
 export const isSpecialListing = (e: { categories: string[] }) => e.categories.includes('food-deal');
 
-/** The Submit form stores "summary\n\ndescription" in one field */
-export function splitDescription(text: string): { summary: string; description: string } {
+/** Short description and description, splitting older listings that stored "summary\n\ndescription" in one field */
+export function splitDescription(event: Pick<Event, 'summary' | 'description'>): { summary: string; description: string } {
+  const text = event.description || '';
+  if (event.summary) return { summary: event.summary, description: text };
   const idx = text.indexOf('\n\n');
   if (idx === -1) {
-    return text.length <= SUMMARY_MAX ? { summary: text, description: '' } : { summary: '', description: text };
+    return text.length <= LEGACY_SUMMARY_MAX ? { summary: text, description: '' } : { summary: '', description: text };
   }
   return { summary: text.slice(0, idx).trim(), description: text.slice(idx + 2).trim() };
 }
 
 function toDraft(event: Event): ListingDraft {
-  const { summary, description } = splitDescription(event.description || '');
+  const { summary, description } = splitDescription(event);
   return {
     title: event.title,
     summary,
@@ -157,14 +162,14 @@ function categoryChips(event: Event) {
 
 /** Everything the submitter entered on the Submit form, laid out cleanly */
 export function ListingSummary({ event }: { event: Event }) {
-  const { summary, description } = splitDescription(event.description || '');
+  const { summary, description } = splitDescription(event);
   const pendingVenue = (event.venue as Venue & { status?: string }).status === 'pending';
   return (
     <div>
       <SummaryRow label={isSpecialListing(event) ? 'Special name' : 'Event title'}>
         <span className="text-[16px] font-bold">{event.title}</span>
       </SummaryRow>
-      <SummaryRow label="Summary">{summary || <span className="text-ink-muted">—</span>}</SummaryRow>
+      <SummaryRow label="Short description">{summary || <span className="text-ink-muted">—</span>}</SummaryRow>
       <SummaryRow label="Description">
         {description ? <p className="whitespace-pre-line">{description}</p> : <span className="text-ink-muted">—</span>}
       </SummaryRow>
@@ -261,7 +266,7 @@ export function ListingDetailView({ event }: { event: Event }) {
       <div className="mt-7 grid grid-cols-1 gap-8 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0">
           <p className="eyebrow-sm">About this {special ? 'special' : 'event'}</p>
-          <p className="mt-3 whitespace-pre-line text-[16px] leading-[1.6] text-navy">{event.description}</p>
+          <p className="mt-3 whitespace-pre-line text-[16px] leading-[1.6] text-navy">{event.description || event.summary}</p>
           {event.imageUrl && (
             <div className="relative mt-6 aspect-[16/9] overflow-hidden rounded-[18px] bg-sky-soft">
               <SmartImage src={event.imageUrl} alt={event.title} sizes="(max-width: 1024px) 100vw, 640px" />
@@ -341,11 +346,17 @@ export function ListingForm({
       <FieldBlock label={special ? 'Special name' : 'Event title'}>
         <input className="field" value={draft.title} onChange={(e) => set({ title: e.target.value })} required />
       </FieldBlock>
-      <FieldBlock label="Short summary" hint={`${draft.summary.length} / ${SUMMARY_MAX} — shown first on Browse cards`}>
-        <input className="field" value={draft.summary} maxLength={SUMMARY_MAX} onChange={(e) => set({ summary: e.target.value })} />
+      <FieldBlock label="Short description" hint={`${draft.summary.length} / ${SUMMARY_MAX} — shown on event cards and previews`}>
+        <textarea className="field" rows={2} value={draft.summary} maxLength={SUMMARY_MAX} onChange={(e) => set({ summary: e.target.value })} />
       </FieldBlock>
-      <FieldBlock label="Description">
-        <textarea className="field" rows={4} value={draft.description} onChange={(e) => set({ description: e.target.value })} />
+      <FieldBlock label="Description" hint={`${draft.description.length} / ${DESCRIPTION_MAX} — shown on the event’s details page`}>
+        <textarea
+          className="field"
+          rows={6}
+          value={draft.description}
+          maxLength={DESCRIPTION_MAX}
+          onChange={(e) => set({ description: e.target.value })}
+        />
       </FieldBlock>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -586,10 +597,10 @@ export default function ListingEditor({ event, variant, venues, onSaved, forceSc
     if (!special && !draft.categories.some((c) => eventCategoryOptions.includes(c))) return setError('Pick at least one category.');
     if (isSeries && scope === 'future' && draft.recurrenceDays.length === 0) return setError('Pick at least one day for the schedule.');
 
-    const description = [draft.summary.trim(), draft.description.trim()].filter(Boolean).join('\n\n');
     const body: Record<string, unknown> = {
       title: draft.title.trim(),
-      description,
+      summary: draft.summary.trim() || null,
+      description: draft.description.trim(),
       date: draft.date,
       startTime: draft.isAllDay ? '00:00' : draft.startTime,
       endTime: draft.isAllDay ? null : draft.endTime || null,

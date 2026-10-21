@@ -182,6 +182,7 @@ export async function POST(request: NextRequest) {
 
     const {
       title,
+      summary,
       description,
       date,
       startTime,
@@ -274,6 +275,7 @@ export async function POST(request: NextRequest) {
       const series = await prisma.eventSeries.create({
         data: {
           title,
+          summary: summary?.trim() || null,
           description,
           startTime: allDay ? '00:00' : startTime,
           endTime: allDay ? null : endTime || null,
@@ -303,6 +305,7 @@ export async function POST(request: NextRequest) {
       const created = await prisma.event.create({
         data: {
           title,
+          summary: summary?.trim() || null,
           description,
           date: eventDate,
           startTime: allDay ? '00:00' : startTime,

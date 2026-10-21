@@ -167,7 +167,7 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
               {event.title}
             </h3>
             <p className="text-muted-foreground text-sm line-clamp-2 mb-4">
-              {event.description}
+              {event.summary || event.description}
             </p>
             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -237,7 +237,7 @@ export default function EventCard({ event, variant = 'default', onLike }: EventC
             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end z-0 group-hover:scale-105 transition-transform duration-500">
               <div className="w-full px-5 pb-4">
                 <p className="text-white text-base line-clamp-4">
-                  {event.description}
+                  {event.summary || event.description}
                 </p>
               </div>
             </div>

@@ -246,8 +246,8 @@ export function ExpandableTimeCard({
 
         <div className="hidden group-hover:block group-focus-within:block">
           <div className="mt-5 flex flex-col gap-4 border-t border-line pt-5">
-            {event.description && (
-              <p className="text-[16px] leading-[1.5] text-ink-muted line-clamp-3">{event.description}</p>
+            {(event.summary || event.description) && (
+              <p className="text-[16px] leading-[1.5] text-ink-muted line-clamp-3">{event.summary || event.description}</p>
             )}
             {(event.price || ages || duration) && (
               <div className="flex flex-wrap gap-x-5 gap-y-2 text-[13px] font-medium text-navy">
@@ -333,9 +333,9 @@ export function SpecialRow({
         >
           {event.title}
         </p>
-        {revealOnHover && event.description && (
+        {revealOnHover && (event.summary || event.description) && (
           <p className="hidden min-w-0 flex-1 text-[16px] leading-[1.5] text-ink-muted line-clamp-2 sm:group-hover:[display:-webkit-box] sm:group-focus-visible:[display:-webkit-box]">
-            {event.description}
+            {event.summary || event.description}
           </p>
         )}
       </div>

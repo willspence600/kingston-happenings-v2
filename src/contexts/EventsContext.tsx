@@ -34,6 +34,7 @@ interface EventsContextType {
 
 interface EventSubmission {
   title: string;
+  summary?: string;
   description: string;
   date: string;
   startTime: string;
