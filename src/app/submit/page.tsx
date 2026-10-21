@@ -56,7 +56,6 @@ const LIMITS = {
   eventTitle: 40,
   specialName: 30,
   deal: 30,
-  summary: 90,
   description: 250,
 };
 
@@ -80,7 +79,6 @@ interface VenueFields {
 interface EventFormData extends VenueFields {
   id: string;
   title: string;
-  summary: string;
   description: string;
   date: string;
   startTime: string;
@@ -105,7 +103,6 @@ interface SpecialFormData extends VenueFields {
   id: string;
   title: string;
   deal: string;
-  summary: string;
   description: string;
   type: SpecialType;
   frequency: SpecialFrequency;
@@ -132,7 +129,6 @@ const createEmptyForm = (venueId = ''): EventFormData => ({
   ...emptyVenueFields(venueId),
   id: generateId(),
   title: '',
-  summary: '',
   description: '',
   date: '',
   startTime: '',
@@ -158,7 +154,6 @@ const createEmptySpecialForm = (venueId = ''): SpecialFormData => ({
   id: generateId(),
   title: '',
   deal: '',
-  summary: '',
   description: '',
   type: 'food',
   frequency: 'weekly',
@@ -172,10 +167,6 @@ const createEmptySpecialForm = (venueId = ''): SpecialFormData => ({
   conditions: [],
   is19Plus: false,
 });
-
-/** The short summary leads the description, so it's what Browse cards and previews show */
-const composeDescription = (summary: string, description: string) =>
-  [summary.trim(), description.trim()].filter(Boolean).join('\n\n');
 
 function buildEventPrice(form: EventFormData): string | undefined {
   const amount = form.priceAmount.trim();
@@ -829,7 +820,7 @@ function SubmitContent() {
 
           const base = {
             title: form.title.trim(),
-            description: composeDescription(form.summary, form.description),
+            description: form.description.trim(),
             startTime: form.isAllDay ? '00:00' : form.startTime,
             endTime: form.isAllDay ? undefined : form.endTime || undefined,
             ...venuePayload(form),
@@ -922,7 +913,8 @@ function SubmitContent() {
 
         const base = {
           title: form.title.trim(),
-          description: composeDescription(form.summary, form.description),
+          // Description is optional for specials, but the API requires one
+          description: form.description.trim() || form.deal.trim() || form.title.trim(),
           startTime: form.isAllDay ? '00:00' : form.startTime,
           endTime: form.isAllDay ? undefined : form.endTime || undefined,
           ...venuePayload(form),
@@ -1280,25 +1272,6 @@ function SubmitContent() {
                           className="field"
                         />
                         <Helper length={formData.title.length} max={LIMITS.eventTitle} />
-                      </div>
-                      <div>
-                        <label htmlFor={`summary-${formData.id}`} className="field-label">
-                          Short summary
-                        </label>
-                        <input
-                          id={`summary-${formData.id}`}
-                          required
-                          maxLength={LIMITS.summary}
-                          value={formData.summary}
-                          onChange={(e) => updateForm(formData.id, { summary: e.target.value })}
-                          placeholder="e.g., Teams of up to six, prizes for the top three, half-price nachos"
-                          className="field"
-                        />
-                        <Helper
-                          hint="One line that shows on the Browse page and event previews."
-                          length={formData.summary.length}
-                          max={LIMITS.summary}
-                        />
                       </div>
                       <div>
                         <label htmlFor={`description-${formData.id}`} className="field-label">
@@ -1682,25 +1655,6 @@ function SubmitContent() {
                         className="field"
                       />
                       <Helper length={formData.deal.length} max={LIMITS.deal} />
-                    </div>
-                    <div>
-                      <label htmlFor={`special-summary-${formData.id}`} className="field-label">
-                        Short summary
-                      </label>
-                      <input
-                        id={`special-summary-${formData.id}`}
-                        required
-                        maxLength={LIMITS.summary}
-                        value={formData.summary}
-                        onChange={(e) => updateSpecialForm(formData.id, { summary: e.target.value })}
-                        placeholder="e.g., All sauces and dry rubs, dine-in only"
-                        className="field"
-                      />
-                      <Helper
-                        hint="One line that shows on the Browse page and previews."
-                        length={formData.summary.length}
-                        max={LIMITS.summary}
-                      />
                     </div>
                     <div>
                       <label htmlFor={`special-description-${formData.id}`} className="field-label">

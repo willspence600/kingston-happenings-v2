@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { addDays, format, parseISO } from 'date-fns';
+import { addDays, format, getDay, parseISO } from 'date-fns';
 import { Calendar, Check, ChevronDown, EyeOff, Loader2, Repeat, Search, Utensils, X } from 'lucide-react';
 import type { Event, EventCategory } from '@/types/event';
 import { categoryLabels, eventCategoryOptions } from '@/constants/categories';
@@ -19,6 +19,17 @@ type DateWindow = 'upcoming' | 'today' | 'week' | 'past' | 'range' | 'all';
 type Repeats = 'all' | 'one-time' | 'recurring';
 
 const PAGE = 60;
+
+// Monday-first, matching date-fns getDay() numbering (0 = Sunday)
+const WEEKDAYS: [number, string][] = [
+  [1, 'Mon'],
+  [2, 'Tue'],
+  [3, 'Wed'],
+  [4, 'Thu'],
+  [5, 'Fri'],
+  [6, 'Sat'],
+  [0, 'Sun'],
+];
 
 const SPECIAL_FILTERS: { id: string; label: string; match: (e: Event) => boolean }[] = [
   { id: 'food', label: 'Food', match: (e) => e.categories.includes('food') },
@@ -92,6 +103,7 @@ export default function PublishedTab({
   const [repeats, setRepeats] = useState<Repeats>('all');
   const [onePerSeries, setOnePerSeries] = useState(false);
   const [showCancelled, setShowCancelled] = useState(true);
+  const [weekdays, setWeekdays] = useState<number[]>([]);
   const [limit, setLimit] = useState(PAGE);
   const [openEvent, setOpenEvent] = useState<Event | null>(null);
 
@@ -111,6 +123,7 @@ export default function PublishedTab({
         if (kind === 'specials') return SPECIAL_FILTERS.find((f) => f.id === category)?.match(e) ?? true;
         return e.categories.includes(category as EventCategory);
       })
+      .filter((e) => weekdays.length === 0 || weekdays.includes(getDay(parseISO(e.date))))
       .filter((e) => (repeats === 'all' ? true : repeats === 'recurring' ? !!e.isRecurring : !e.isRecurring))
       .filter((e) => {
         switch (dateWindow) {
@@ -142,7 +155,7 @@ export default function PublishedTab({
       seen.add(e.seriesId);
       return true;
     });
-  }, [listings, kind, query, venueIds, category, repeats, dateWindow, rangeFrom, rangeTo, onePerSeries, showCancelled, today, weekEnd]);
+  }, [listings, kind, query, venueIds, category, repeats, dateWindow, rangeFrom, rangeTo, onePerSeries, showCancelled, weekdays, today, weekEnd]);
 
   const byDate = useMemo(() => {
     const map = new Map<string, Event[]>();
@@ -154,7 +167,7 @@ export default function PublishedTab({
   }, [filtered, limit]);
 
   const resetPage = () => setLimit(PAGE);
-  const anyFilter = query || venueIds.length || category || repeats !== 'all' || dateWindow !== 'upcoming';
+  const anyFilter = query || venueIds.length || category || weekdays.length || repeats !== 'all' || dateWindow !== 'upcoming';
 
   return (
     <div>
@@ -209,6 +222,26 @@ export default function PublishedTab({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <span className="w-14 text-[12px] font-bold uppercase tracking-[0.1em] text-ink-muted">Day</span>
+          <button className="chip h-9" data-active={weekdays.length === 0} onClick={() => { setWeekdays([]); resetPage(); }}>
+            Any day
+          </button>
+          {WEEKDAYS.map(([day, label]) => {
+            const on = weekdays.includes(day);
+            return (
+              <button
+                key={day}
+                className="chip h-9"
+                data-active={on}
+                aria-pressed={on}
+                onClick={() => { setWeekdays(on ? weekdays.filter((d) => d !== day) : [...weekdays, day]); resetPage(); }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <span className="w-14 text-[12px] font-bold uppercase tracking-[0.1em] text-ink-muted">Filter</span>
           <VenueFilter venues={venueOptions} selected={venueIds} onChange={(ids) => { setVenueIds(ids); resetPage(); }} />
           <select
@@ -251,6 +284,7 @@ export default function PublishedTab({
                 setQuery('');
                 setVenueIds([]);
                 setCategory('');
+                setWeekdays([]);
                 setRepeats('all');
                 setDateWindow('upcoming');
                 resetPage();

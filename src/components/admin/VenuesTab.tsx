@@ -214,9 +214,9 @@ export default function VenuesTab({
         </div>
 
         <div className="mt-6 hidden grid-cols-[1fr_150px_minmax(340px,auto)] gap-6 border-b-[1.5px] border-navy px-2 pb-2.5 text-[12px] font-medium uppercase tracking-[0.16em] text-[#6d7682] lg:grid">
-          <span>Venue · {filtered.length}</span>
-          <span>This week</span>
-          <span className="text-right">Admin</span>
+          <span>Venue &amp; address · {filtered.length}</span>
+          <span>Listings, next 7 days</span>
+          <span className="text-right">Promotion tier · Downtown · Major · Actions</span>
         </div>
 
         {filtered.map((v) => (
@@ -351,7 +351,7 @@ function AddVenueModal({
   onCreated: (name: string) => Promise<void>;
   showToast: ShowToast;
 }) {
-  const [form, setForm] = useState({ name: '', address: '', neighborhood: '', website: '', isDowntownDistrict: false, isMajor: false });
+  const [form, setForm] = useState({ name: '', address: '', website: '', isDowntownDistrict: false, isMajor: false });
   const [saving, setSaving] = useState(false);
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -373,7 +373,6 @@ function AddVenueModal({
           ...form,
           name: form.name.trim(),
           address: form.address.trim(),
-          neighborhood: form.neighborhood.trim() || null,
           website: form.website.trim() || null,
         }),
       });
@@ -408,15 +407,9 @@ function AddVenueModal({
             <label className="field-label" htmlFor="new-venue-address">Address *</label>
             <input id="new-venue-address" className="field" value={form.address} onChange={(e) => set('address', e.target.value)} placeholder="123 Princess St, Kingston" required />
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="field-label" htmlFor="new-venue-neighborhood">Neighbourhood</label>
-              <input id="new-venue-neighborhood" className="field" value={form.neighborhood} onChange={(e) => set('neighborhood', e.target.value)} />
-            </div>
-            <div>
-              <label className="field-label" htmlFor="new-venue-website">Website</label>
-              <input id="new-venue-website" className="field" type="url" value={form.website} onChange={(e) => set('website', e.target.value)} placeholder="https://" />
-            </div>
+          <div>
+            <label className="field-label" htmlFor="new-venue-website">Website</label>
+            <input id="new-venue-website" className="field" type="url" value={form.website} onChange={(e) => set('website', e.target.value)} placeholder="https://" />
           </div>
           <div className="flex flex-wrap gap-6">
             {(

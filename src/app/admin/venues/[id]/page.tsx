@@ -22,7 +22,6 @@ import { listingTier, venueTier, type PromotionTier } from '@/lib/promotion';
 interface Form {
   name: string;
   address: string;
-  neighborhood: string;
   imageUrl: string;
   coverImageUrl: string;
   isMajor: boolean;
@@ -42,7 +41,6 @@ interface Organizer {
 const toForm = (v: AdminVenue): Form => ({
   name: v.name,
   address: v.address,
-  neighborhood: v.neighborhood || '',
   imageUrl: v.imageUrl || '',
   coverImageUrl: v.coverImageUrl || '',
   isMajor: !!v.isMajor,
@@ -311,17 +309,11 @@ export default function AdminVenuePage({ params }: { params: Promise<{ id: strin
             <section className="card p-5 sm:p-7">
               <p className="text-[20px] font-bold text-navy">Basics</p>
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
+                <div className="sm:col-span-2">
                   <label className="field-label" htmlFor="v-name">
                     Venue name
                   </label>
                   <input id="v-name" className="field" value={form.name} onChange={(e) => set({ name: e.target.value })} />
-                </div>
-                <div>
-                  <label className="field-label" htmlFor="v-hood">
-                    Neighbourhood
-                  </label>
-                  <input id="v-hood" className="field" value={form.neighborhood} onChange={(e) => set({ neighborhood: e.target.value })} />
                 </div>
                 <div className="sm:col-span-2">
                   <label className="field-label" htmlFor="v-address">
