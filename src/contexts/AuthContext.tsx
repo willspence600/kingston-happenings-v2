@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useLayoutEffect, useRef, ReactNode, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { User as SupabaseUser, AuthError } from '@supabase/supabase-js';
 
@@ -216,15 +216,19 @@ function formatAuthError(error: AuthError): string {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return readUserCache();
-  });
-  const [isLoading, setIsLoading] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    return readUserCache() === null;
-  });
+  // Start logged-out on both server and client so hydration matches, then
+  // restore the cached user before the first paint
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const userRef = useRef<User | null>(null);
+
+  useLayoutEffect(() => {
+    const cached = readUserCache();
+    if (cached) {
+      setUser(cached);
+      setIsLoading(false);
+    }
+  }, []);
 
   // Keep ref in sync so callbacks always see the latest user
   useEffect(() => { userRef.current = user; }, [user]);
