@@ -61,6 +61,22 @@ function DowntownKingstonIcon() {
   );
 }
 
+/** Small Downtown Kingston badge shown beside venue names for downtown-district venues */
+function DowntownBadge({ venue }: { venue: Event['venue'] }) {
+  if (!isDowntown(venue)) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/dk-badge.svg"
+      alt="Downtown Kingston"
+      title="Downtown Kingston"
+      width={14}
+      height={14}
+      className="ml-1 inline-block h-3.5 w-3.5 shrink-0 align-[-2px]"
+    />
+  );
+}
+
 const railCategories: { id: RailFilter; label: string; tile: string; icon: ReactNode }[] = [
   { id: DOWNTOWN, label: 'Downtown Kingston', tile: 'bg-[#ee364d]', icon: <DowntownKingstonIcon /> },
   { id: 'live-music', label: categoryLabels['live-music'], tile: 'bg-[#ff6b4a] text-white', icon: <Music size={17} /> },
@@ -225,6 +241,7 @@ function CompactEventRow({ event }: { event: Event }) {
           <CategoryDot category={cat} />
           <span className="truncate">
             {cat ? categoryLabels[cat] : 'Event'} · {event.venue.name}
+            <DowntownBadge venue={event.venue} />
           </span>
         </span>
       </span>
@@ -272,6 +289,7 @@ function DetailedEventRow({
           <CategoryDot category={cat} />
           <span className="truncate">
             {cat ? categoryLabels[cat] : 'Event'} · {event.venue.name}
+            <DowntownBadge venue={event.venue} />
           </span>
         </span>
         <span className="truncate text-[14px] text-ink-muted">{event.summary || event.description}</span>
@@ -317,7 +335,10 @@ function SpecialListRow({ event, saved, onSave }: { event: Event; saved: boolean
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-[5px] pointer-events-none">
         <span className="truncate text-[16px] font-bold text-navy group-hover:underline">{event.title}</span>
-        <span className="truncate text-[13px] text-ink-subtle">{event.venue.name}</span>
+        <span className="truncate text-[13px] text-ink-subtle">
+          {event.venue.name}
+          <DowntownBadge venue={event.venue} />
+        </span>
         <span className="truncate text-[14px] text-ink-muted">{event.summary || event.description}</span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1.5 text-right pointer-events-none sm:w-[130px]">
@@ -860,7 +881,8 @@ function EventsContent() {
                           >
                             <p className="text-[15px] font-bold text-navy group-hover:underline">{deal.title}</p>
                             <p className="mt-1 text-[13px] text-ink-subtle">
-                              {deal.venue.name} ·{' '}
+                              {deal.venue.name}
+                              <DowntownBadge venue={deal.venue} /> ·{' '}
                               {isAllDayEvent(deal)
                                 ? 'All day'
                                 : deal.endTime
